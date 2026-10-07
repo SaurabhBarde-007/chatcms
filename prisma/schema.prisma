@@ -1,0 +1,98 @@
+// ChatCMS Adv data model.
+// Every channel (your chatbot, WhatsApp, ...) is stored in the same
+// Contact / Conversation / Message tables, so the inbox treats them all the same way.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// The connection URL lives in prisma7.config.ts (migrations) and src/lib/db.ts (runtime).
+datasource db {
+  provider = "postgresql"
+}
+
+enum Channel {
+  WEB_BOT
+  WHATSAPP
+}
+
+enum ConversationStatus {
+  BOT // your chatbot is answering
+  HUMAN // you took over from the dashboard (bot is paused)
+  CLOSED
+}
+
+enum Direction {
+  IN // from the customer
+  OUT // from our side (bot or you)
+}
+
+// Who wrote a message.
+enum SenderType {
+  CUSTOMER // the person chatting with your business
+  BOT // your chatbot's automatic reply
+  HUMAN // you, replying from the dashboard
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+// The customer. Created automatically when their first message arrives.
+model Contact {
+  id            String         @id @default(cuid())
+  name          String?
+  phone         String?
+  email         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  conversations Conversation[]
+}
+
+model Conversation {
+  id              String             @id @default(cuid())
+  channel         Channel
+  // Chatbot: your bot's conversation/session id. WhatsApp: the customer's wa_id (phone).
+  externalId      String
+  contactId       String
+  contact         Contact            @relation(fields: [contactId], references: [id])
+  status          ConversationStatus @default(BOT)
+  lastMessageAt   DateTime           @default(now())
+  lastMessageText String?
+  // Time of the customer's last message. WhatsApp only allows free-text replies
+  // within 24h of this; after that you must send an approved template.
+  lastInboundAt   DateTime?
+  unreadCount     Int                @default(0)
+  createdAt       DateTime           @default(now())
+  messages        Message[]
+
+  @@unique([channel, externalId])
+  @@index([lastMessageAt(sort: Desc)])
+}
+
+model Message {
+  id             String        @id @default(cuid())
+  conversationId String
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction      Direction
+  senderType     SenderType
+  // text | image | audio | video | document | sticker | location | interactive | reaction | template | other
+  type           String        @default("text")
+  body           String?
+  mediaId        String? // WhatsApp media id (shown via /api/media/[mediaId])
+  mediaUrl       String? // direct URL (chatbot attachments)
+  mimeType       String?
+  raw            Json? // original payload, handy for debugging
+  // WhatsApp wamid, or "bot:<id>" for your bot. Unique, so a resent webhook never creates a duplicate.
+  externalId     String?       @unique
+  status         MessageStatus @default(SENT)
+  error          String?
+  createdAt      DateTime      @default(now())
+
+  @@index([conversationId, createdAt])
+}
