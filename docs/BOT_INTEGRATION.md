@@ -1,5 +1,13 @@
 # Connecting your chatbot
 
+> **Currently turned off.** The chatbot channel is fully built but switched off until you have a
+> callback URL. To turn it on:
+> 1. Set `BOT_INGEST_SECRET` and `BOT_CALLBACK_URL` in `.env`.
+> 2. Add `"WEB_BOT"` to `ENABLED_CHANNELS` in `src/lib/enabled-channels.ts`.
+> 3. Restart the app. The channel filter, bot statuses and "Hand back to bot" reappear in the inbox.
+>
+> While it's off, `POST /api/ingest/messages` answers `404`.
+
 Your chatbot and the inbox talk over two HTTP calls. Both are signed with the shared secret `BOT_INGEST_SECRET`:
 
 | Direction | Who calls | Purpose |

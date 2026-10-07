@@ -5,6 +5,7 @@ import type { WhatsAppStatusUpdate } from "./channels/whatsapp";
 import { db } from "./db";
 import { isStatusAdvance } from "./message-status";
 import { toMessageDTO, toSummaryDTO } from "./dto";
+import { ENABLED_CHANNELS } from "./enabled-channels";
 import { previewText } from "./ingest";
 import { publish } from "./realtime/publish";
 import type { ConversationDetailDTO, ConversationSummaryDTO, MessageDTO } from "./types";
@@ -32,10 +33,11 @@ export type ConversationFilters = {
 
 export async function listConversations(filters: ConversationFilters): Promise<ConversationSummaryDTO[]> {
   const search = filters.search?.trim();
+  const channels = ENABLED_CHANNELS.filter((c) => !filters.channel || c === filters.channel);
 
   const rows = await db.conversation.findMany({
     where: {
-      channel: filters.channel,
+      channel: { in: [...channels] },
       status: filters.status,
       ...(search && {
         OR: [

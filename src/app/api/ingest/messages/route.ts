@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { botIngestSchema, botPayloadToInbound } from "@/lib/channels/webbot";
+import { isChannelEnabled } from "@/lib/enabled-channels";
 import { env } from "@/lib/env";
 import { saveInboundMessage } from "@/lib/ingest";
 import { isValidSignature } from "@/lib/signatures";
@@ -7,6 +8,10 @@ import { isValidSignature } from "@/lib/signatures";
 // POST /api/ingest/messages — your chatbot sends every message (customer + bot) here.
 // Contract and examples: docs/BOT_INTEGRATION.md
 export async function POST(req: NextRequest) {
+  if (!isChannelEnabled("WEB_BOT")) {
+    return NextResponse.json({ error: "The chatbot channel is turned off (see src/lib/enabled-channels.ts)" }, { status: 404 });
+  }
+
   const rawBody = await req.text();
 
   if (!isValidSignature(rawBody, req.headers.get("x-signature"), env.bot.ingestSecret)) {

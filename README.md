@@ -1,6 +1,8 @@
 # ChatCMS Adv
 
-One **real-time** inbox for all customer conversations: **your chatbot** and **WhatsApp** (Meta Cloud API). Read every chat, take over from the bot, and reply on either channel from one screen. New messages, delivery ticks and status changes appear instantly in every open tab, with no refresh and no polling.
+One **real-time** inbox for your **WhatsApp** conversations (Meta Cloud API). Read every chat and reply from one screen. New messages, delivery ticks and status changes appear instantly in every open tab, with no refresh and no polling.
+
+A second channel for **your own chatbot** is already built in but **turned off for now**. See [Chatbot channel](#chatbot-channel-turned-off-for-now).
 
 **Stack:** Next.js 16 (App Router), Prisma 7, PostgreSQL on Neon, Tailwind 4. Real-time uses Server-Sent Events plus Postgres `LISTEN/NOTIFY`, so there's no extra service to sign up for.
 
@@ -13,14 +15,15 @@ npm run db:migrate        # creates the tables in Neon
 npm run dev               # open http://localhost:3000
 ```
 
-Try it without WhatsApp or your bot. Set `BOT_INGEST_SECRET` and `WA_APP_SECRET` in `.env` (any values work locally), keep the inbox open, and run:
+Try it without sending a real WhatsApp message. Make sure `WA_APP_SECRET` is set in `.env` (any value works locally), keep the inbox open, and run:
 
 ```bash
-npm run test:bot-message -- "Hello from the website"
 npm run test:whatsapp -- "Hi, is this in stock?"
 ```
 
-Both conversations appear immediately.
+The conversation appears immediately. Add a phone number and name to simulate someone else: `npm run test:whatsapp -- "Hello" 919811112222 "Asha"`.
+
+> **Careful with replies to simulated chats.** If `.env` has your real WhatsApp credentials, replying to a simulated conversation sends a real WhatsApp message to that number. Simulate with your own number, or expect the reply to fail.
 
 > **No login.** The dashboard has no authentication yet. Anyone who can open the URL can read chats and send replies. Keep it on your own machine, or put protection in front of it (for example, password protection from your hosting provider) before deploying it publicly.
 
@@ -31,8 +34,8 @@ Put the connection string from the Neon console in `DATABASE_URL`. That's the on
 ## How it works
 
 ```
-Your chatbot ─POST /api/ingest/messages──▶┐
-             ◀─POST BOT_CALLBACK_URL──────┤   (your replies, handoff)
+Your chatbot ─POST /api/ingest/messages──▶┐   (turned off for now)
+             ◀─POST BOT_CALLBACK_URL──────┤
                                           ▼
 Meta WhatsApp ─POST /api/webhooks/whatsapp▶ service layer ──▶ Neon Postgres
               ◀─Graph API /messages───────┘   (ingest.ts,          │
@@ -82,6 +85,7 @@ src/
     message-status.ts           Delivery status order (never goes backwards)
     signatures.ts               HMAC signing and verification
     env.ts                      All env vars in one place
+    enabled-channels.ts         Which channels are switched on (WhatsApp; chatbot is off)
     database-url.ts             Pooled → direct Neon URL (for LISTEN and migrations)
   app/api/
     stream                      Live updates (SSE)
@@ -121,9 +125,17 @@ docs/BOT_INTEGRATION.md         Contract for your chatbot team
 
 **24-hour rule:** WhatsApp only allows free-text replies within 24 hours of the customer's last message. After that, the reply box switches to **template mode**, and you can only send templates approved in WhatsApp Manager.
 
-## Connecting your chatbot
+## Chatbot channel (turned off for now)
 
-See [docs/BOT_INTEGRATION.md](docs/BOT_INTEGRATION.md).
+Your chatbot can push its conversations into the same inbox, and replies from the dashboard are sent back to it. All of this is built, but it stays off until you have a callback URL for your bot. While it's off, the inbox shows only WhatsApp and `POST /api/ingest/messages` answers `404`.
+
+To turn it on:
+
+1. Set `BOT_INGEST_SECRET` and `BOT_CALLBACK_URL` in `.env` (see `.env.example`).
+2. Add `"WEB_BOT"` to `ENABLED_CHANNELS` in `src/lib/enabled-channels.ts`.
+3. Restart. The channel filter, the bot statuses ("Bot replying", "Hand back to bot") and `npm run test:bot-message` start working.
+
+No database change is needed. The contract for your bot is in [docs/BOT_INTEGRATION.md](docs/BOT_INTEGRATION.md).
 
 ## Scripts
 
@@ -133,7 +145,7 @@ See [docs/BOT_INTEGRATION.md](docs/BOT_INTEGRATION.md).
 | `npm run db:migrate` | Apply schema changes to the database (creates a migration) |
 | `npm run db:deploy` | Apply existing migrations (production) |
 | `npm run db:studio` | Browse the database in a GUI |
-| `npm run test:bot-message -- "text" [conversationId] [bot]` | Send a fake chatbot message |
+| `npm run test:bot-message -- "text" [conversationId] [bot]` | Send a fake chatbot message (only when the chatbot is on) |
 | `npm run test:whatsapp -- "text" [phone] [name]` | Send a fake WhatsApp message (signed like Meta) |
 | `npm run test:whatsapp -- --status read <wamid>` | Send a fake delivery tick for a message you sent |
 | `npm test` | Unit tests |
@@ -146,6 +158,7 @@ The app works on any Node host: Vercel, Railway, Render, Fly or a VPS, with one 
 - **Serverless (e.g. Vercel):** platforms cap how long a request can stay open, so `/api/stream` is cut off periodically. The browser reconnects by itself within a few seconds and refetches, so you won't miss anything. You'll just see **Reconnecting…** for a moment.
 - **Neon costs:** while at least one inbox tab is open, each server keeps one direct connection to Neon, which keeps the compute awake. It disconnects 30 seconds after the last tab closes, so Neon can scale to zero again.
 - **Proxies:** the stream sends a heartbeat every 25 seconds and disables buffering (`X-Accel-Buffering: no`). If you put nginx in front, make sure response buffering is off for `/api/stream`.
+- **Deploy in your database's region.** Every query is a round trip to Neon. If the app runs far from the database, as it does on a laptop on another continent, each query costs a few hundred milliseconds and each new connection about 2 seconds, so updates sometimes lag by a second or two. Running the app in the same region as your Neon project (shown in its host name, e.g. `us-east-2`) brings this down to a few milliseconds.
 - Run `npm run db:deploy` on deploy to apply migrations.
 
 ## Limitations

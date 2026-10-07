@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { contactName, shortTime } from "@/lib/format";
+import { CHATBOT_ENABLED, ENABLED_CHANNELS } from "@/lib/enabled-channels";
+import { CHANNEL_LABEL, contactName, shortTime } from "@/lib/format";
 import type { Filters } from "@/lib/inbox-state";
 import type { ConversationSummaryDTO } from "@/lib/types";
-import { ChannelBadge, StatusBadge } from "./Badges";
+import { ChannelBadge, STATUS_LABEL, StatusBadge } from "./Badges";
 
 type Props = {
   conversations: ConversationSummaryDTO[] | null;
@@ -15,17 +16,17 @@ type Props = {
   onSelect: (id: string) => void;
 };
 
-const CHANNEL_OPTIONS: { value: Filters["channel"]; label: string }[] = [
-  { value: "", label: "All" },
-  { value: "WHATSAPP", label: "WhatsApp" },
-  { value: "WEB_BOT", label: "Chatbot" },
-];
+// Channel chips only appear when there's more than one channel to choose from.
+const CHANNEL_OPTIONS: { value: Filters["channel"]; label: string }[] =
+  ENABLED_CHANNELS.length > 1
+    ? [{ value: "", label: "All" }, ...ENABLED_CHANNELS.map((c) => ({ value: c, label: CHANNEL_LABEL[c] }))]
+    : [];
 
 const STATUS_OPTIONS: { value: Filters["status"]; label: string }[] = [
   { value: "", label: "Any status" },
-  { value: "BOT", label: "Bot replying" },
-  { value: "HUMAN", label: "You" },
-  { value: "CLOSED", label: "Closed" },
+  ...(CHATBOT_ENABLED ? [{ value: "BOT" as const, label: STATUS_LABEL.BOT }] : []),
+  { value: "HUMAN", label: STATUS_LABEL.HUMAN },
+  { value: "CLOSED", label: STATUS_LABEL.CLOSED },
 ];
 
 export function ConversationList({ conversations, error, filters, onFiltersChange, selectedId, onSelect }: Props) {

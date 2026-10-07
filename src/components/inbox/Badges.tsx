@@ -1,4 +1,5 @@
 import type { ConnectionStatus } from "@/hooks/useInboxStream";
+import { CHATBOT_ENABLED, ENABLED_CHANNELS } from "@/lib/enabled-channels";
 import { CHANNEL_LABEL } from "@/lib/format";
 import type { ChannelName, ConversationStatusName } from "@/lib/types";
 
@@ -8,6 +9,7 @@ const CHANNEL_STYLE: Record<ChannelName, string> = {
 };
 
 export function ChannelBadge({ channel }: { channel: ChannelName }) {
+  if (ENABLED_CHANNELS.length < 2) return null; // nothing to tell apart
   return (
     <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${CHANNEL_STYLE[channel]}`}>
       {CHANNEL_LABEL[channel]}
@@ -23,7 +25,8 @@ const STATUS_STYLE: Record<ConversationStatusName, string> = {
 
 export const STATUS_LABEL: Record<ConversationStatusName, string> = {
   BOT: "Bot replying",
-  HUMAN: "You",
+  // With a bot, HUMAN means "you took over"; without one, it's just an open conversation.
+  HUMAN: CHATBOT_ENABLED ? "You" : "Open",
   CLOSED: "Closed",
 };
 
