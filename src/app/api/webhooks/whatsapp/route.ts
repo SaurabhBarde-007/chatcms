@@ -11,8 +11,10 @@ import { isValidSignature } from "@/lib/signatures";
 export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams;
   if (params.get("hub.mode") === "subscribe" && params.get("hub.verify_token") === env.whatsapp.verifyToken) {
+    console.log("[whatsapp] webhook verified by Meta");
     return new NextResponse(params.get("hub.challenge"), { status: 200 });
   }
+  console.warn("[whatsapp] webhook verification failed: hub.verify_token doesn't match WA_VERIFY_TOKEN");
   return new NextResponse("Forbidden", { status: 403 });
 }
 
@@ -21,6 +23,8 @@ export async function POST(req: NextRequest) {
   const rawBody = await req.text();
 
   if (!isValidSignature(rawBody, req.headers.get("x-hub-signature-256"), env.whatsapp.appSecret)) {
+    // Meta signs with the App Secret of the app the webhook is configured on.
+    console.warn("[whatsapp] rejected webhook: invalid signature. Is WA_APP_SECRET that app's App Secret?");
     return new NextResponse("Invalid signature", { status: 401 });
   }
 
@@ -32,6 +36,7 @@ export async function POST(req: NextRequest) {
   }
 
   const { messages, statuses } = parseWhatsAppWebhook(payload);
+  console.log(`[whatsapp] webhook received: ${messages.length} message(s), ${statuses.length} status update(s)`);
 
   // Errors are logged, not returned: a non-200 makes Meta resend the whole batch.
   for (const message of messages) {

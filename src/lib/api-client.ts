@@ -1,5 +1,14 @@
 // Tiny fetch wrapper for the dashboard. Throws with the server's error message.
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
@@ -7,7 +16,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error ?? `Request failed (${res.status})`);
+  if (!res.ok) throw new ApiError(data?.error ?? `Request failed (${res.status})`, res.status);
   return data as T;
 }
 

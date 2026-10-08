@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api-client";
+import { api, ApiError } from "@/lib/api-client";
 import {
   applyEventToList,
   applyEventToThread,
@@ -70,6 +70,12 @@ export function useInbox() {
       setThreadError(null);
       if (data.unreadCount > 0 && document.visibilityState === "visible") markRead(id);
     } catch (err) {
+      // The link points at a conversation that no longer exists (deleted, or an old bookmark):
+      // go back to the list instead of showing an error.
+      if (err instanceof ApiError && err.status === 404) {
+        if (selectedRef.current === id) window.history.replaceState(null, "", window.location.pathname);
+        return;
+      }
       setThreadError({ id, message: errorMessage(err) });
     }
   }, [markRead]);
