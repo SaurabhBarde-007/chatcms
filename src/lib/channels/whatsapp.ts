@@ -19,7 +19,7 @@ export class WhatsAppApiError extends Error {
   }
 }
 
-async function graph<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function graph<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${env.whatsapp.graphBaseUrl}/${env.whatsapp.graphVersion}/${path}`, {
     ...init,
     headers: {
@@ -32,8 +32,10 @@ async function graph<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     const e = data?.error;
     const details = e?.error_data?.details;
-    // Meta prefixes messages with "(#131026) "; the code is kept separately.
-    const text = typeof e?.message === "string" ? e.message.replace(/^\(#\d+\)\s*/, "") : null;
+    // Meta prefixes messages with "(#131026) "; the code is kept separately. Template errors
+    // come with a friendlier explanation in error_user_msg, so prefer that.
+    const raw = e?.error_user_msg || e?.message;
+    const text = typeof raw === "string" ? raw.replace(/^\(#\d+\)\s*/, "") : null;
     const message = text ? (details && !text.includes(details) ? `${text}: ${details}` : text) : null;
     throw new WhatsAppApiError(message ?? `WhatsApp API error ${res.status}`, e?.code, res.status);
   }

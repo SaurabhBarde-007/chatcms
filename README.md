@@ -2,7 +2,7 @@
 
 One **real-time** inbox for your **WhatsApp** conversations (Meta Cloud API). Read every chat and reply from one screen. New messages, delivery ticks and status changes appear instantly in every open tab, with no refresh and no polling.
 
-Plus **WhatsApp marketing**: contacts with opt-in tracking, saved audience segments, broadcast campaigns of approved templates (now or scheduled), and engagement analytics. See [WhatsApp marketing](#whatsapp-marketing).
+Plus **WhatsApp marketing**: contacts with opt-in tracking, saved audience segments, your own message templates (created and edited here, reviewed by WhatsApp, visible in WhatsApp Manager), broadcast campaigns (now or scheduled), and engagement analytics. See [WhatsApp marketing](#whatsapp-marketing).
 
 A second channel for **your own chatbot** is already built in but **turned off for now**. See [Chatbot channel](#chatbot-channel-turned-off-for-now).
 
@@ -111,7 +111,9 @@ src/
       segment-service.ts        Segments with live sizes
       analytics.ts              Engagement queries
       phone.ts, opt-out.ts      Phone normalization, opt-out keywords
-  app/(app)/                    Pages: inbox, contacts, segments, campaigns, analytics
+      template-builder.ts       Template editor draft ⇄ Meta format + review checks (pure, tested)
+      template-admin.ts         Create / edit / delete templates in your WhatsApp account, sample uploads
+  app/(app)/                    Pages: inbox, contacts, segments, templates, campaigns, analytics
   app/api/
     stream                      Live updates (SSE)
     webhooks/whatsapp           Meta webhook (verify + receive)
@@ -121,13 +123,14 @@ src/
     whatsapp/templates          Approved templates for the picker
     contacts/...                Contacts, tags, CSV import, opt-in API
     segments/...                Segments + live preview
+    templates/...               Your WhatsApp templates: list, create, edit, delete, sample media
     campaigns/...               Campaigns, templates, audience size, recipients, cancel
     cron/campaigns              Starts due campaigns (called by GitHub Actions)
     analytics                   Engagement numbers
   hooks/useInbox.ts             Inbox state + live updates
   hooks/useInboxStream.ts       EventSource connection + status
   components/inbox/             UI: list, thread, composer, contact panel, badges
-  components/{contacts,segments,campaigns,analytics,charts}/   Marketing UI
+  components/{contacts,segments,templates,campaigns,analytics,charts}/   Marketing UI
 .github/workflows/campaign-scheduler.yml   Every 30 min: start due campaigns
 scripts/                        Local simulators for your bot and for Meta
 docs/BOT_INTEGRATION.md         Contract for your chatbot team
@@ -171,15 +174,32 @@ docs/OPT_IN_API.md              Opt-in API for your website / forms
    - Variable `APP_URL`: e.g. `https://chatcms-one.vercel.app`
 
    Then push to the default branch and run **Actions → Campaign scheduler → Run workflow** once to check that it works. You should see `{"ok":true}`.
-4. **WhatsApp:** a valid, permanent `WA_ACCESS_TOKEN` (temporary tokens expire after 24h and every send fails) and at least one approved **marketing** template in WhatsApp Manager.
+4. **WhatsApp:** a valid, permanent `WA_ACCESS_TOKEN` (temporary tokens expire after 24h and every send fails). It needs both `whatsapp_business_messaging` (sending) and `whatsapp_business_management` (templates) permissions.
 
 ### Using it
 
 1. **Contacts**: import a CSV (needs a `phone` column; `name`, `email`, `tags`, `opted_in` and any custom columns are picked up), opt people in by hand, or collect opt-ins from your website through the opt-in API. Customers who message you appear automatically, but not as opted in.
-2. **Segments**: save audiences such as "tagged vip, messaged us in the last 30 days, +91". A segment's size is live, and it's re-evaluated when a campaign starts.
-3. **Campaigns** → **New campaign**: pick an approved template and fill each placeholder from a contact field (first name, phone, a custom field, each with a fallback) or fixed text. Then choose the audience and send now or schedule. The preview shows the message as the customer sees it.
-4. **Campaign page**: progress while sending, then the funnel (sent → delivered → read → replied → button taps), failures with WhatsApp's reasons, opt-outs, and every recipient.
-5. **Analytics**: conversations (volume, active contacts, response time, read rate), campaign engagement, and audience growth (opt-ins vs opt-outs per day, where opt-ins came from).
+2. **Templates**: write your own (see below), or use ones made in WhatsApp Manager. Both show up here.
+3. **Segments**: save audiences such as "tagged vip, messaged us in the last 30 days, +91". A segment's size is live, and it's re-evaluated when a campaign starts.
+4. **Campaigns** → **New campaign**: pick an approved template and fill each placeholder from a contact field (first name, phone, a custom field, each with a fallback) or fixed text. Then choose the audience and send now or schedule. The preview shows the message as the customer sees it.
+5. **Campaign page**: progress while sending, then the funnel (sent → delivered → read → replied → button taps), failures with WhatsApp's reasons, opt-outs, and every recipient.
+6. **Analytics**: conversations (volume, active contacts, response time, read rate), campaign engagement, and audience growth (opt-ins vs opt-outs per day, where opt-ins came from).
+
+### Templates
+
+**Templates** lists every template in your WhatsApp Business Account: approved, in review, rejected (with WhatsApp's reason in plain words), paused or disabled. It reads them live from Meta, so templates created here appear in WhatsApp Manager and vice versa.
+
+- **New template**: name, language, category (marketing or utility) and variable style (`{{1}}` or `{{first_name}}`). Then:
+  - **Header**: none, text with one variable, or an image, video or document. Media headers need a sample, uploaded to Meta for you: a file up to 4 MB, or a public https link for bigger ones.
+  - **Message**: bold, italic and strikethrough, plus "Add variable". Each variable needs a sample value; reviewers see it, customers don't.
+  - **Footer and buttons**: quick replies, website (optionally personal per customer, like `https://shop.com/{{1}}`), call, and copy code. Marketing templates get a one-click "Stop promotions" button, which this app treats as an opt-out.
+
+  A live preview shows how it will look, and every WhatsApp rule (lengths, variable order, variables at the start or end, button combinations) is checked before you can submit. WhatsApp reviews new templates, usually within minutes and at most 24 hours. The list refreshes itself until it's decided.
+- **Edit**: rejected and paused templates can be fixed and resubmitted any time. Approved ones can be edited **once a day and 10 times a month** (WhatsApp's rule), and go back to review. The name, language and variable style can't change. A media header you don't change is re-uploaded for you.
+- **Delete** removes that one language version. WhatsApp doesn't let you reuse an approved template's name for 30 days, and a template used by a scheduled or sending campaign can't be deleted.
+- **Use** starts a campaign with that template.
+
+Authentication templates (one-time passwords), carousels, flows, catalog and location headers aren't supported in the editor yet. Create those in WhatsApp Manager.
 
 ### How sending works
 

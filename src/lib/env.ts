@@ -39,6 +39,10 @@ export const env = {
     get graphVersion() {
       return process.env.WA_GRAPH_VERSION || "v26.0";
     },
+    /** Meta App ID, used to upload template sample media. Optional: looked up from the token if empty. */
+    get appId() {
+      return process.env.WA_APP_ID ?? "";
+    },
     /** Only changed for testing against a fake Graph API. */
     get graphBaseUrl() {
       return process.env.WA_GRAPH_BASE_URL || "https://graph.facebook.com";

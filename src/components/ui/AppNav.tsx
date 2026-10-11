@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/inbox", label: "Inbox" },
   { href: "/contacts", label: "Contacts" },
   { href: "/segments", label: "Segments" },
+  { href: "/templates", label: "Templates" },
   { href: "/campaigns", label: "Campaigns" },
   { href: "/analytics", label: "Analytics" },
 ];

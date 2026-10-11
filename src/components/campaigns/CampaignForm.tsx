@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useFetch } from "@/hooks/useFetch";
 import { api } from "@/lib/api-client";
@@ -61,6 +61,14 @@ export function CampaignForm() {
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Coming from Templates → "Use": start with that template selected.
+  const preset = useSearchParams().get("template");
+  const [presetDone, setPresetDone] = useState(false);
+  if (!presetDone && preset && templates.data) {
+    setPresetDone(true);
+    if (templates.data.some((t) => `${t.name}|${t.language}` === preset && !t.unsupported)) chooseTemplate(preset);
+  }
 
   const audience = useFetch<{ size: number }>(`/api/campaigns/audience${segmentId ? `?segmentId=${segmentId}` : ""}`);
   const template = templates.data?.find((t) => `${t.name}|${t.language}` === templateKey) ?? null;
