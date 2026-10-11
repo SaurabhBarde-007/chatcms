@@ -12,18 +12,14 @@ export function Inbox() {
   const { selectedId, thread } = inbox;
 
   return (
-    <div className="flex h-dvh flex-col">
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4">
-        <span className="font-semibold">ChatCMS Adv</span>
-        <ConnectionBadge status={inbox.connection} />
-      </header>
-
+    <div className="flex h-full flex-col">
       <div className="flex min-h-0 flex-1">
         {/* On phones only one pane is visible at a time. */}
         <aside
           className={`w-full shrink-0 border-r border-slate-200 bg-white md:flex md:w-80 ${selectedId ? "hidden" : "flex"}`}
         >
           <ConversationList
+            connection={<ConnectionBadge status={inbox.connection} />}
             conversations={inbox.list}
             error={inbox.listError}
             filters={inbox.filters}

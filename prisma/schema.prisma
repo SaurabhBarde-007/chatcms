@@ -33,6 +33,7 @@ enum SenderType {
   CUSTOMER // the person chatting with your business
   BOT // your chatbot's automatic reply
   HUMAN // you, replying from the dashboard
+  CAMPAIGN // a broadcast template sent by a campaign
 }
 
 enum MessageStatus {
@@ -43,15 +44,47 @@ enum MessageStatus {
   FAILED
 }
 
-// The customer. Created automatically when their first message arrives.
+// Marketing consent. WhatsApp only allows marketing templates to people who opted in.
+enum OptInStatus {
+  UNKNOWN
+  OPTED_IN
+  OPTED_OUT
+}
+
+// The customer. Created on their first message, or by a CSV import / the opt-in API.
 model Contact {
-  id            String         @id @default(cuid())
-  name          String?
-  phone         String?
-  email         String?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  conversations Conversation[]
+  id                 String              @id @default(cuid())
+  name               String?
+  phone              String?
+  email              String?
+  // WhatsApp id: the phone number's digits incl. country code, no "+". One contact per number.
+  waId               String?             @unique
+  tags               String[]            @default([])
+  // Custom fields (from CSV columns / the opt-in API), usable in campaign templates.
+  attributes         Json                @default("{}")
+  optInStatus        OptInStatus         @default(UNKNOWN)
+  optInSource        String? // csv | manual | api | keyword
+  optInAt            DateTime?
+  optOutAt           DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  conversations      Conversation[]
+  consentEvents      ConsentEvent[]
+  campaignRecipients CampaignRecipient[]
+
+  @@index([optInStatus])
+}
+
+// Every opt-in / opt-out, for the audit trail and the audience growth chart.
+model ConsentEvent {
+  id        String      @id @default(cuid())
+  contactId String
+  contact   Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  status    OptInStatus // OPTED_IN or OPTED_OUT
+  source    String // csv | manual | api | keyword
+  createdAt DateTime    @default(now())
+
+  @@index([createdAt])
 }
 
 model Conversation {
@@ -76,23 +109,113 @@ model Conversation {
 }
 
 model Message {
-  id             String        @id @default(cuid())
-  conversationId String
-  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  direction      Direction
-  senderType     SenderType
+  id                String             @id @default(cuid())
+  conversationId    String
+  conversation      Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction         Direction
+  senderType        SenderType
   // text | image | audio | video | document | sticker | location | interactive | reaction | template | other
-  type           String        @default("text")
-  body           String?
-  mediaId        String? // WhatsApp media id (shown via /api/media/[mediaId])
-  mediaUrl       String? // direct URL (chatbot attachments)
-  mimeType       String?
-  raw            Json? // original payload, handy for debugging
+  type              String             @default("text")
+  body              String?
+  mediaId           String? // WhatsApp media id (shown via /api/media/[mediaId])
+  mediaUrl          String? // direct URL (chatbot attachments)
+  mimeType          String?
+  raw               Json? // original payload, handy for debugging
   // WhatsApp wamid, or "bot:<id>" for your bot. Unique, so a resent webhook never creates a duplicate.
-  externalId     String?       @unique
-  status         MessageStatus @default(SENT)
-  error          String?
-  createdAt      DateTime      @default(now())
+  externalId        String?            @unique
+  status            MessageStatus      @default(SENT)
+  error             String?
+  createdAt         DateTime           @default(now())
+  // Set when this message was sent by a campaign.
+  campaignRecipient CampaignRecipient?
 
   @@index([conversationId, createdAt])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Marketing: segments, campaigns, recipients
+// ---------------------------------------------------------------------------
+
+// A saved audience. `rules` (see src/lib/segments.ts) is evaluated at send time,
+// always limited to opted-in WhatsApp contacts.
+model Segment {
+  id          String     @id @default(cuid())
+  name        String
+  description String?
+  rules       Json
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  campaigns   Campaign[]
+}
+
+enum CampaignStatus {
+  SCHEDULED // waiting for scheduledAt
+  SENDING
+  COMPLETED
+  CANCELLED
+  FAILED // stopped by an error that affects every message (expired token, template disabled…)
+}
+
+// A broadcast of one approved template to an audience.
+model Campaign {
+  id               String              @id @default(cuid())
+  name             String
+  status           CampaignStatus      @default(SCHEDULED)
+  templateName     String
+  templateLanguage String
+  templateCategory String?
+  // Snapshot of the template when the campaign was created (see src/lib/templates.ts).
+  template         Json
+  // How each placeholder is filled for every recipient.
+  variables        Json
+  segmentId        String?
+  segment          Segment?            @relation(fields: [segmentId], references: [id], onDelete: SetNull)
+  audienceSize     Int?
+  scheduledAt      DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  lastError        String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  recipients       CampaignRecipient[]
+
+  @@index([status, scheduledAt])
+}
+
+enum RecipientStatus {
+  PENDING
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SKIPPED // not sent: opted out meanwhile, or the campaign was cancelled / stopped
+}
+
+// One contact in one campaign. The timestamps drive the engagement funnel.
+model CampaignRecipient {
+  id          String          @id @default(cuid())
+  campaignId  String
+  campaign    Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId   String
+  contact     Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  status      RecipientStatus @default(PENDING)
+  messageId   String?         @unique
+  message     Message?        @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  error       String?
+  errorCode   Int?
+  claimedAt   DateTime? // when a sender picked it up (to recover from crashes)
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  failedAt    DateTime?
+  repliedAt   DateTime?
+  buttonAt    DateTime? // tapped a quick-reply button
+  buttonText  String?
+  optedOutAt  DateTime? // opted out in reply to this campaign
+
+  @@unique([campaignId, contactId])
+  @@index([campaignId, status])
+  @@index([contactId, sentAt])
 }

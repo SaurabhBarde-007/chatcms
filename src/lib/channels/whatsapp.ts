@@ -1,4 +1,5 @@
 import { env } from "../env";
+import { parseTemplate, type RawTemplate, type Template } from "../marketing/templates";
 import type { ChannelAdapter, InboundMessage } from "./types";
 
 // WhatsApp Cloud API: https://developers.facebook.com/docs/whatsapp/cloud-api
@@ -7,8 +8,19 @@ import type { ChannelAdapter, InboundMessage } from "./types";
 // Graph API helper
 // ---------------------------------------------------------------------------
 
+/** An error response from the Graph API, with Meta's error code (see classifySendError). */
+export class WhatsAppApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: number,
+    readonly httpStatus?: number,
+  ) {
+    super(message);
+  }
+}
+
 async function graph<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`https://graph.facebook.com/${env.whatsapp.graphVersion}/${path}`, {
+  const res = await fetch(`${env.whatsapp.graphBaseUrl}/${env.whatsapp.graphVersion}/${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${env.whatsapp.accessToken}`,
@@ -18,7 +30,12 @@ async function graph<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new Error(data?.error?.message ?? `WhatsApp API error ${res.status}`);
+    const e = data?.error;
+    const details = e?.error_data?.details;
+    // Meta prefixes messages with "(#131026) "; the code is kept separately.
+    const text = typeof e?.message === "string" ? e.message.replace(/^\(#\d+\)\s*/, "") : null;
+    const message = text ? (details && !text.includes(details) ? `${text}: ${details}` : text) : null;
+    throw new WhatsAppApiError(message ?? `WhatsApp API error ${res.status}`, e?.code, res.status);
   }
   return data as T;
 }
@@ -27,7 +44,26 @@ async function graph<T>(path: string, init: RequestInit = {}): Promise<T> {
 // Sending
 // ---------------------------------------------------------------------------
 
-type SendResponse = { messages?: { id: string }[] };
+type SendResponse = { contacts?: { wa_id?: string }[]; messages?: { id: string }[] };
+
+/** Send an approved template with ready-made components (see lib/marketing/templates.ts). */
+export async function sendTemplateMessage(
+  to: string,
+  template: { name: string; language: string },
+  components: Record<string, unknown>[],
+): Promise<{ externalId?: string }> {
+  const res = await graph<SendResponse>(`${env.whatsapp.phoneNumberId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to,
+      type: "template",
+      template: { name: template.name, language: { code: template.language }, components },
+    }),
+  });
+  return { externalId: res.messages?.[0]?.id };
+}
 
 export const whatsappAdapter: ChannelAdapter = {
   async send(conversation, message) {
@@ -67,12 +103,19 @@ export type WhatsAppTemplate = {
   paramCount: number;
 };
 
-type RawTemplate = {
-  name: string;
-  language: string;
-  status: string;
-  components: { type: string; text?: string }[];
-};
+/** All APPROVED templates, in full (header, body, buttons…). Follows paging. */
+export async function listTemplates(): Promise<Template[]> {
+  const all: RawTemplate[] = [];
+  let path: string | null =
+    `${env.whatsapp.businessAccountId}/message_templates?fields=name,language,status,category,parameter_format,components&limit=200`;
+  while (path) {
+    const page: { data: RawTemplate[]; paging?: { cursors?: { after?: string }; next?: string } } = await graph(path);
+    all.push(...page.data);
+    const after = page.paging?.next ? page.paging.cursors?.after : undefined;
+    path = after && all.length < 2000 ? `${path.split("&after=")[0]}&after=${encodeURIComponent(after)}` : null;
+  }
+  return all.filter((t) => t.status === "APPROVED").map(parseTemplate);
+}
 
 export async function listApprovedTemplates(): Promise<WhatsAppTemplate[]> {
   const res = await graph<{ data: RawTemplate[] }>(
@@ -81,7 +124,7 @@ export async function listApprovedTemplates(): Promise<WhatsAppTemplate[]> {
   return res.data
     .filter((t) => t.status === "APPROVED")
     .map((t) => {
-      const body = t.components.find((c) => c.type === "BODY")?.text ?? "";
+      const body = t.components?.find((c) => c.type === "BODY")?.text ?? "";
       return { name: t.name, language: t.language, body, paramCount: countTemplateParams(body) };
     });
 }
@@ -110,6 +153,8 @@ export type WhatsAppStatusUpdate = {
   externalId: string; // wamid of a message WE sent
   status: "SENT" | "DELIVERED" | "READ" | "FAILED";
   error?: string;
+  errorCode?: number;
+  timestamp?: Date;
 };
 
 const STATUS_VALUES = ["SENT", "DELIVERED", "READ", "FAILED"] as const;
@@ -139,6 +184,8 @@ export function parseWhatsAppWebhook(payload: any): {
             externalId: m.id,
             senderType: "CUSTOMER",
             ...extractContent(m),
+            // Set when they replied to (or tapped a button on) one of our messages.
+            replyToExternalId: m.context?.id ?? null,
             raw: m,
             timestamp: m.timestamp ? new Date(Number(m.timestamp) * 1000) : undefined,
           },
@@ -153,6 +200,8 @@ export function parseWhatsAppWebhook(payload: any): {
           externalId: s.id,
           status,
           error: err ? (err.error_data?.details ?? err.title ?? err.message) : undefined,
+          errorCode: err?.code,
+          timestamp: s.timestamp ? new Date(Number(s.timestamp) * 1000) : undefined,
         });
       }
     }
@@ -193,8 +242,8 @@ function extractContent(m: any): { type: string; body?: string; mediaId?: string
         type: "interactive",
         body: m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title,
       };
-    case "button": // quick-reply tap on a template
-      return { type: "interactive", body: m.button?.text };
+    case "button": // quick-reply tap on a template (e.g. a campaign)
+      return { type: "button", body: m.button?.text };
     case "reaction":
       return { type: "reaction", body: `Reacted ${m.reaction?.emoji ?? ""}`.trim() };
     default:

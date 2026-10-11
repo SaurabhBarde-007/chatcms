@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { CHATBOT_ENABLED, ENABLED_CHANNELS } from "@/lib/enabled-channels";
 import { CHANNEL_LABEL, contactName, shortTime } from "@/lib/format";
 import type { Filters } from "@/lib/inbox-state";
@@ -8,6 +8,8 @@ import type { ConversationSummaryDTO } from "@/lib/types";
 import { ChannelBadge, STATUS_LABEL, StatusBadge } from "./Badges";
 
 type Props = {
+  /** Live-connection indicator shown above the search box. */
+  connection: ReactNode;
   conversations: ConversationSummaryDTO[] | null;
   error: string | null;
   filters: Filters;
@@ -29,7 +31,7 @@ const STATUS_OPTIONS: { value: Filters["status"]; label: string }[] = [
   { value: "CLOSED", label: STATUS_LABEL.CLOSED },
 ];
 
-export function ConversationList({ conversations, error, filters, onFiltersChange, selectedId, onSelect }: Props) {
+export function ConversationList({ connection, conversations, error, filters, onFiltersChange, selectedId, onSelect }: Props) {
   // Wait until typing pauses before searching, so we don't query on every keystroke.
   const [search, setSearch] = useState(filters.q);
   useEffect(() => {
@@ -42,6 +44,10 @@ export function ConversationList({ conversations, error, filters, onFiltersChang
   return (
     <div className="flex min-h-0 w-full flex-col">
       <div className="space-y-2 border-b border-slate-200 p-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">Conversations</span>
+          {connection}
+        </div>
         <input
           className="input"
           type="search"

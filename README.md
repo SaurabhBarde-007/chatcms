@@ -2,6 +2,8 @@
 
 One **real-time** inbox for your **WhatsApp** conversations (Meta Cloud API). Read every chat and reply from one screen. New messages, delivery ticks and status changes appear instantly in every open tab, with no refresh and no polling.
 
+Plus **WhatsApp marketing**: contacts with opt-in tracking, saved audience segments, broadcast campaigns of approved templates (now or scheduled), and engagement analytics. See [WhatsApp marketing](#whatsapp-marketing).
+
 A second channel for **your own chatbot** is already built in but **turned off for now**. See [Chatbot channel](#chatbot-channel-turned-off-for-now).
 
 **Stack:** Next.js 16 (App Router), Prisma 7, PostgreSQL on Neon, Tailwind 4. Real-time uses Server-Sent Events plus Postgres `LISTEN/NOTIFY`, so there's no extra service to sign up for.
@@ -58,7 +60,17 @@ All channels share the same three tables, so the dashboard doesn't care where a 
 |---|---|
 | `Contact` | The customer: name, phone, email. Created automatically on their first message. |
 | `Conversation` | One chat thread with a contact on one channel. Status is `BOT` (bot answering), `HUMAN` (you took over) or `CLOSED`. |
-| `Message` | One message. `senderType` says who wrote it: `CUSTOMER`, `BOT` (your chatbot) or `HUMAN` (you, from the dashboard). |
+| `Message` | One message. `senderType` says who wrote it: `CUSTOMER`, `BOT` (your chatbot), `HUMAN` (you, from the dashboard) or `CAMPAIGN`. |
+
+Marketing adds:
+
+| Table | What it is |
+|---|---|
+| `Contact` (extra columns) | `waId` (one contact per WhatsApp number), `tags`, `attributes` (custom fields), `optInStatus` + source and dates |
+| `ConsentEvent` | Every opt-in / opt-out, with its source. Audit trail + growth chart. |
+| `Segment` | A saved audience: rules, evaluated when a campaign starts |
+| `Campaign` | One template broadcast: template snapshot, how placeholders are filled, audience, schedule, status |
+| `CampaignRecipient` | One contact in one campaign: status + sent/delivered/read/replied/button/opt-out times |
 
 ## Project structure
 
@@ -87,6 +99,19 @@ src/
     env.ts                      All env vars in one place
     enabled-channels.ts         Which channels are switched on (WhatsApp; chatbot is off)
     database-url.ts             Pooled → direct Neon URL (for LISTEN and migrations)
+    marketing/
+      templates.ts              Template structure, placeholders, per-recipient send payload (pure, tested)
+      segments.ts               Segment rules → database filter (pure, tested)
+      campaign-runner.ts        Sends campaigns: claiming, retries, stop rules, crash recovery
+      campaigns.ts              Create / list / cancel campaigns, funnel stats
+      campaign-status.ts        Delivery ticks → campaign funnel
+      inbound.ts                Replies → reply/button attribution, STOP → opt-out
+      consent.ts                Opt-in / opt-out + audit trail
+      contacts.ts, csv.ts       Contact list, CSV import, opt-in API
+      segment-service.ts        Segments with live sizes
+      analytics.ts              Engagement queries
+      phone.ts, opt-out.ts      Phone normalization, opt-out keywords
+  app/(app)/                    Pages: inbox, contacts, segments, campaigns, analytics
   app/api/
     stream                      Live updates (SSE)
     webhooks/whatsapp           Meta webhook (verify + receive)
@@ -94,11 +119,19 @@ src/
     conversations/...           Dashboard API (list, detail, reply, status, read)
     media/[mediaId]             Shows WhatsApp images, audio and video in the browser
     whatsapp/templates          Approved templates for the picker
+    contacts/...                Contacts, tags, CSV import, opt-in API
+    segments/...                Segments + live preview
+    campaigns/...               Campaigns, templates, audience size, recipients, cancel
+    cron/campaigns              Starts due campaigns (called by GitHub Actions)
+    analytics                   Engagement numbers
   hooks/useInbox.ts             Inbox state + live updates
   hooks/useInboxStream.ts       EventSource connection + status
   components/inbox/             UI: list, thread, composer, contact panel, badges
+  components/{contacts,segments,campaigns,analytics,charts}/   Marketing UI
+.github/workflows/campaign-scheduler.yml   Every 30 min: start due campaigns
 scripts/                        Local simulators for your bot and for Meta
 docs/BOT_INTEGRATION.md         Contract for your chatbot team
+docs/OPT_IN_API.md              Opt-in API for your website / forms
 ```
 
 **Common changes:**
@@ -124,6 +157,40 @@ docs/BOT_INTEGRATION.md         Contract for your chatbot team
 5. Send a WhatsApp message to your business number. It appears in the inbox instantly.
 
 **24-hour rule:** WhatsApp only allows free-text replies within 24 hours of the customer's last message. After that, the reply box switches to **template mode**, and you can only send templates approved in WhatsApp Manager.
+
+## WhatsApp marketing
+
+### Setup
+
+1. **Database:** run `npm run db:deploy` (adds the marketing tables).
+2. **Secrets in Vercel** (Settings → Environment Variables), then redeploy:
+   - `CRON_SECRET`: a long random value (`openssl rand -hex 32`)
+   - `OPTIN_API_KEY`: another one, if your website will send opt-ins ([docs/OPT_IN_API.md](docs/OPT_IN_API.md))
+3. **GitHub scheduler** (repo → Settings → Secrets and variables → Actions):
+   - Secret `CRON_SECRET`: the same value as in Vercel
+   - Variable `APP_URL`: e.g. `https://chatcms-one.vercel.app`
+
+   Then push to the default branch and run **Actions → Campaign scheduler → Run workflow** once to check that it works. You should see `{"ok":true}`.
+4. **WhatsApp:** a valid, permanent `WA_ACCESS_TOKEN` (temporary tokens expire after 24h and every send fails) and at least one approved **marketing** template in WhatsApp Manager.
+
+### Using it
+
+1. **Contacts**: import a CSV (needs a `phone` column; `name`, `email`, `tags`, `opted_in` and any custom columns are picked up), opt people in by hand, or collect opt-ins from your website through the opt-in API. Customers who message you appear automatically, but not as opted in.
+2. **Segments**: save audiences such as "tagged vip, messaged us in the last 30 days, +91". A segment's size is live, and it's re-evaluated when a campaign starts.
+3. **Campaigns** → **New campaign**: pick an approved template and fill each placeholder from a contact field (first name, phone, a custom field, each with a fallback) or fixed text. Then choose the audience and send now or schedule. The preview shows the message as the customer sees it.
+4. **Campaign page**: progress while sending, then the funnel (sent → delivered → read → replied → button taps), failures with WhatsApp's reasons, opt-outs, and every recipient.
+5. **Analytics**: conversations (volume, active contacts, response time, read rate), campaign engagement, and audience growth (opt-ins vs opt-outs per day, where opt-ins came from).
+
+### How sending works
+
+- **Only opted-in contacts are ever messaged.** Consent is checked again right before each send, so anyone who opts out after a campaign is scheduled is skipped.
+- **Opt-outs are automatic:** a reply of STOP, UNSUBSCRIBE or "Stop promotions" (e.g. a quick-reply button), or WhatsApp error 131050 (the person blocked your marketing), opts them out. A CSV import can't re-subscribe them; only they can, through you, the dashboard or the opt-in API.
+- **"Send now"** starts right away. **Scheduled** campaigns start on the next scheduler run after their time. The GitHub workflow runs every 30 minutes, so allow up to about 30–45 minutes.
+- **Big campaigns** send about 25 messages per batch, 8 at a time. Each run works for up to 4 minutes, then hands over to a fresh request, so the cron isn't needed to finish.
+- **No duplicates:** each recipient is locked while being sent. If it's unclear whether WhatsApp accepted a message (network error, crash), it's marked failed, not retried.
+- **Stops early** on errors that would hit everyone: an expired token, a paused or disabled template, a spam limit, or 10 identical failures in a row. Unsent recipients are marked skipped and the campaign shows why.
+- **Replies are attributed** exactly when the customer replies to or taps a button on the campaign message, and otherwise to their latest campaign within 3 days.
+- **Campaign messages appear in each customer's chat**, but a chat only shows up in the inbox list once the customer replies, so a broadcast doesn't flood the inbox.
 
 ## Chatbot channel (turned off for now)
 
@@ -163,8 +230,10 @@ The app works on any Node host: Vercel, Railway, Render, Fly or a VPS, with one 
 
 ## Limitations
 
-- **No login.** See the note at the top.
+- **No login.** See the note at the top. With campaigns this matters more: anyone with the URL could message your whole opted-in audience.
 - **Replies can only be text or WhatsApp templates.** Sending media from the dashboard isn't supported yet.
+- **The inbox's template picker fills body placeholders only.** Templates with media headers or named placeholders can be sent from Campaigns. Location headers, carousels, flows and catalog buttons aren't supported anywhere yet.
+- **No link-click tracking.** WhatsApp doesn't report URL button taps; quick-reply button taps are tracked.
 - **One customer can appear twice.** Someone who chats on both WhatsApp and your website becomes two separate contacts.
 - **No typing indicators.** These would need your bot to send typing events.
 - **Many tabs over plain HTTP/1.1:** browsers allow about 6 open connections per site, and each inbox tab uses one for the live stream. Over HTTPS (HTTP/2), which most hosts use, this limit doesn't apply.

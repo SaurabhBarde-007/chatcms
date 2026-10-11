@@ -78,7 +78,7 @@ describe("parseWhatsAppWebhook", () => {
     expect(byId["wamid.DOC"]).toMatchObject({ type: "document", mediaId: "MEDIA_2", body: "invoice.pdf" });
     expect(byId["wamid.LOC"]).toMatchObject({ type: "location", body: "Office — 19.07,72.87" });
     expect(byId["wamid.BTN"]).toMatchObject({ type: "interactive", body: "Yes please" });
-    expect(byId["wamid.TPL"]).toMatchObject({ type: "interactive", body: "Stop" });
+    expect(byId["wamid.TPL"]).toMatchObject({ type: "button", body: "Stop" });
     expect(byId["wamid.RCT"]).toMatchObject({ type: "reaction", body: "Reacted 👍" });
     expect(byId["wamid.UNK"]).toMatchObject({ type: "other", body: "[Unsupported message type: order]" });
   });
@@ -87,9 +87,9 @@ describe("parseWhatsAppWebhook", () => {
     const result = parseWhatsAppWebhook(statuses);
     expect(result.messages).toHaveLength(0);
     expect(result.statuses).toEqual([
-      { externalId: "wamid.OUT1", status: "DELIVERED", error: undefined },
-      { externalId: "wamid.OUT2", status: "READ", error: undefined },
-      { externalId: "wamid.OUT3", status: "FAILED", error: "Window closed" },
+      { externalId: "wamid.OUT1", status: "DELIVERED", error: undefined, errorCode: undefined, timestamp: new Date(1727430100_000) },
+      { externalId: "wamid.OUT2", status: "READ", error: undefined, errorCode: undefined, timestamp: new Date(1727430101_000) },
+      { externalId: "wamid.OUT3", status: "FAILED", error: "Window closed", errorCode: 131047, timestamp: undefined },
     ]);
   });
 

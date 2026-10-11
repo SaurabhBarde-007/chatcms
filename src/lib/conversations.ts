@@ -3,10 +3,12 @@ import { getAdapter } from "./channels";
 import type { OutgoingMessage } from "./channels/types";
 import type { WhatsAppStatusUpdate } from "./channels/whatsapp";
 import { db } from "./db";
+import { UserError } from "./errors";
 import { isStatusAdvance } from "./message-status";
 import { toMessageDTO, toSummaryDTO } from "./dto";
 import { ENABLED_CHANNELS } from "./enabled-channels";
 import { previewText } from "./ingest";
+import { onCampaignStatus } from "./marketing/campaign-status";
 import { publish } from "./realtime/publish";
 import type { ConversationDetailDTO, ConversationSummaryDTO, MessageDTO } from "./types";
 import { isWindowOpen } from "./whatsapp-window";
@@ -15,8 +17,7 @@ import { isWindowOpen } from "./whatsapp-window";
 // API routes stay thin: parse the request, call a function below, return JSON.
 // Every change ends with publish() so all open dashboards update instantly.
 
-/** An error caused by bad input — shown to the user as-is (HTTP 400). */
-export class UserError extends Error {}
+export { UserError } from "./errors";
 
 const LIST_LIMIT = 100;
 const THREAD_LIMIT = 500;
@@ -39,6 +40,8 @@ export async function listConversations(filters: ConversationFilters): Promise<C
     where: {
       channel: { in: [...channels] },
       status: filters.status,
+      // Campaign sends don't fill this in, so a chat only shows up once there's a real exchange.
+      lastMessageText: { not: null },
       ...(search && {
         OR: [
           { contact: { name: { contains: search, mode: "insensitive" } } },
@@ -182,5 +185,12 @@ export async function applyStatusUpdate(update: WhatsAppStatusUpdate) {
     where: { id: message.id },
     data: { status: update.status, error: update.error ?? null },
   });
+
+  if (message.senderType === "CAMPAIGN") {
+    // Campaign ticks feed the campaign's analytics. They aren't pushed live to the inbox:
+    // a broadcast can produce thousands of them.
+    await onCampaignStatus(message.id, update);
+    return;
+  }
   await publish({ kind: "message", id: message.id });
 }

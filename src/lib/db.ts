@@ -8,7 +8,12 @@ import { env } from "./env";
 const globalForDb = globalThis as unknown as { db?: PrismaClient };
 
 function client(): PrismaClient {
-  return (globalForDb.db ??= new PrismaClient({ adapter: new PrismaPg({ connectionString: env.databaseUrl }) }));
+  return (globalForDb.db ??= new PrismaClient({
+    adapter: new PrismaPg({ connectionString: env.databaseUrl }),
+    // Opening a connection to Neon can take ~2s from far away (Prisma's default wait is 2s),
+    // so give transactions room to start and finish.
+    transactionOptions: { maxWait: 10_000, timeout: 30_000 },
+  }));
 }
 
 export const db = new Proxy({} as PrismaClient, {

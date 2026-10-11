@@ -1,6 +1,7 @@
 import { CHANNEL_LABEL, contactName, fullTime } from "@/lib/format";
 import type { ConversationDetailDTO } from "@/lib/types";
 import { isWindowOpen } from "@/lib/whatsapp-window";
+import { ContactMarketing } from "./ContactMarketing";
 
 /** Right-hand panel: who the customer is. */
 export function ContactPanel({ conversation }: { conversation: ConversationDetailDTO }) {
@@ -19,6 +20,7 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
           <Row label="24h window" value={isWindowOpen(conversation.lastInboundAt) ? "Open" : "Closed"} />
         )}
       </dl>
+      {conversation.channel === "WHATSAPP" && <ContactMarketing key={contact.id} contact={contact} />}
     </div>
   );
 }

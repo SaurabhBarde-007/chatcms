@@ -1,0 +1,41 @@
+# Starts scheduled WhatsApp campaigns. Every 30 minutes it asks the app to send whatever is due.
+#
+# Setup (GitHub → repo → Settings → Secrets and variables → Actions):
+#   Secret   CRON_SECRET  same value as CRON_SECRET in the app's environment (Vercel)
+#   Variable APP_URL      e.g. https://chatcms-one.vercel.app  (no trailing slash)
+#
+# Notes:
+# - Scheduled workflows only run from the default branch, and GitHub may start them a few
+#   minutes late. "Send now" campaigns don't depend on this.
+# - Each run takes a few seconds but counts as 1 Actions minute: ~1,440 minutes/month, which
+#   fits the free plan's 2,000 for private repos.
+# - Run it by hand from the Actions tab ("Run workflow") to test the setup.
+
+name: Campaign scheduler
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: campaign-scheduler
+  cancel-in-progress: false
+
+jobs:
+  start-due-campaigns:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ask the app to send due campaigns
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Set the APP_URL variable and the CRON_SECRET secret (see the comments at the top of this file)."
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error --max-time 30 \
+            -X POST "$APP_URL/api/cron/campaigns" \
+            -H "Authorization: Bearer $CRON_SECRET"

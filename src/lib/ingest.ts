@@ -1,6 +1,7 @@
 import { Prisma, type Channel, type ConversationStatus } from "@/generated/prisma/client";
 import type { InboundMessage } from "./channels/types";
 import { db } from "./db";
+import { onWhatsAppInbound } from "./marketing/inbound";
 import { publish } from "./realtime/publish";
 
 // Status for a new (or re-opened) conversation. WhatsApp has no bot in front of it,
@@ -25,11 +26,13 @@ export async function saveInboundMessage(input: InboundMessage): Promise<{ dupli
 
   const conversation = await findOrCreateConversation(channel, conversationExternalId, contact);
 
-  // Fill in contact details we didn't know before (never overwrite with empty values).
+  // Fill in contact details we didn't know before. Never overwrite what we have
+  // (e.g. a name from your CSV import with someone's WhatsApp profile name).
+  const known = await db.contact.findUnique({ where: { id: conversation.contactId } });
   const contactUpdate = {
-    name: contact.name || undefined,
-    phone: contact.phone || undefined,
-    email: contact.email || undefined,
+    name: !known?.name && contact.name ? contact.name : undefined,
+    phone: !known?.phone && contact.phone ? contact.phone : undefined,
+    email: !known?.email && contact.email ? contact.email : undefined,
   };
   if (Object.values(contactUpdate).some(Boolean)) {
     await db.contact.update({ where: { id: conversation.contactId }, data: contactUpdate });
@@ -81,6 +84,17 @@ export async function saveInboundMessage(input: InboundMessage): Promise<{ dupli
   }
 
   await publish({ kind: "message", id: saved.id });
+
+  if (channel === "WHATSAPP" && isCustomer) {
+    await onWhatsAppInbound({
+      contactId: conversation.contactId,
+      type: message.type,
+      body: message.body,
+      replyToExternalId: message.replyToExternalId,
+      at: createdAt,
+    }).catch((err) => console.error("[marketing] inbound handling failed:", err));
+  }
+
   return { duplicate: false };
 }
 
@@ -95,7 +109,16 @@ async function findOrCreateConversation(
       channel,
       externalId,
       status: DEFAULT_STATUS[channel],
-      contact: { create: { name: contact.name, phone: contact.phone, email: contact.email } },
+      // WhatsApp contacts are one per number (they may already exist from an import or campaign).
+      contact:
+        channel === "WHATSAPP"
+          ? {
+              connectOrCreate: {
+                where: { waId: externalId },
+                create: { waId: externalId, name: contact.name, phone: contact.phone, email: contact.email },
+              },
+            }
+          : { create: { name: contact.name, phone: contact.phone, email: contact.email } },
     },
     update: {},
   };

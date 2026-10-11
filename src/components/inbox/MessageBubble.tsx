@@ -5,12 +5,14 @@ const BUBBLE_STYLE: Record<MessageDTO["senderType"], string> = {
   CUSTOMER: "bg-white border border-slate-200 text-slate-900",
   BOT: "bg-violet-50 border border-violet-200 text-slate-900",
   HUMAN: "bg-emerald-600 text-white",
+  CAMPAIGN: "bg-sky-50 border border-sky-200 text-slate-900",
 };
 
 const SENDER_LABEL: Record<MessageDTO["senderType"], string | null> = {
   CUSTOMER: null,
   BOT: "Bot",
   HUMAN: "You",
+  CAMPAIGN: "Campaign",
 };
 
 export function MessageBubble({ message }: { message: MessageDTO }) {
@@ -27,7 +29,9 @@ export function MessageBubble({ message }: { message: MessageDTO }) {
 
         <div className="mt-1 flex items-center justify-end gap-1 text-[11px] opacity-70" title={fullTime(message.createdAt)}>
           {shortTime(message.createdAt)}
-          {message.senderType === "HUMAN" && <DeliveryStatus status={message.status} />}
+          {(message.senderType === "HUMAN" || message.senderType === "CAMPAIGN") && (
+            <DeliveryStatus status={message.status} />
+          )}
         </div>
         {message.status === "FAILED" && (
           <p className="mt-1 rounded bg-red-100 px-2 py-1 text-xs text-red-700">Not delivered: {message.error}</p>
@@ -69,7 +73,7 @@ function DeliveryStatus({ status }: { status: MessageDTO["status"] }) {
       return <span title="Delivered">✓✓</span>;
     case "READ":
       return (
-        <span title="Read" className="font-bold text-sky-200">
+        <span title="Read" className="font-bold text-sky-300">
           ✓✓
         </span>
       );

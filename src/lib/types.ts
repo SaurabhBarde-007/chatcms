@@ -4,12 +4,15 @@
 export type ChannelName = "WEB_BOT" | "WHATSAPP";
 export type ConversationStatusName = "BOT" | "HUMAN" | "CLOSED";
 export type MessageStatusName = "PENDING" | "SENT" | "DELIVERED" | "READ" | "FAILED";
+export type OptInStatusName = "UNKNOWN" | "OPTED_IN" | "OPTED_OUT";
 
 export type ContactDTO = {
   id: string;
   name: string | null;
   phone: string | null;
   email: string | null;
+  optInStatus: OptInStatusName;
+  tags: string[];
 };
 
 export type ConversationSummaryDTO = {
@@ -28,7 +31,7 @@ export type MessageDTO = {
   id: string;
   conversationId: string;
   direction: "IN" | "OUT";
-  senderType: "CUSTOMER" | "BOT" | "HUMAN";
+  senderType: "CUSTOMER" | "BOT" | "HUMAN" | "CAMPAIGN";
   type: string;
   body: string | null;
   mediaSrc: string | null;

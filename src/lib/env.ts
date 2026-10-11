@@ -39,6 +39,20 @@ export const env = {
     get graphVersion() {
       return process.env.WA_GRAPH_VERSION || "v26.0";
     },
+    /** Only changed for testing against a fake Graph API. */
+    get graphBaseUrl() {
+      return process.env.WA_GRAPH_BASE_URL || "https://graph.facebook.com";
+    },
+  },
+
+  /** Shared secret for /api/cron/campaigns (GitHub Actions sends it). Optional locally. */
+  get cronSecret() {
+    return process.env.CRON_SECRET ?? "";
+  },
+
+  /** Key your website/forms use to call the opt-in API. */
+  get optInApiKey() {
+    return process.env.OPTIN_API_KEY ?? "";
   },
 
   bot: {

@@ -18,6 +18,8 @@ export type InboundMessage = {
     mediaId?: string | null;
     mediaUrl?: string | null;
     mimeType?: string | null;
+    /** The channel's id of the message being replied to (WhatsApp `context.id`). */
+    replyToExternalId?: string | null;
     raw?: unknown;
     timestamp?: Date;
   };
