@@ -26,6 +26,12 @@ const ALIASES: Record<string, string[]> = {
   opted_in: ["opted_in", "opt_in", "optin", "consent", "whatsapp_opt_in", "subscribed", "marketing_opt_in"],
 };
 
+// Columns for the built-in {{school}} / {{class}} variables, stored as custom fields with these names.
+const ATTRIBUTE_ALIASES: Record<string, string[]> = {
+  school: ["school", "school_name", "institute", "institution"],
+  class: ["class", "grade", "standard", "std", "class_standard"],
+};
+
 const YES = new Set(["yes", "y", "true", "1", "opted_in", "opted in", "subscribed", "optin", "opt_in"]);
 const NO = new Set(["no", "n", "false", "0", "opted_out", "opted out", "unsubscribed", "optout", "opt_out"]);
 
@@ -71,7 +77,7 @@ export function mapCsvRows(
   records: Record<string, string>[],
   options: { defaultCountryCode?: string; addTags?: string[] } = {},
 ): { rows: ImportRow[]; problems: ImportProblem[] } {
-  const known = new Set(Object.values(ALIASES).flat());
+  const known = new Set([...Object.values(ALIASES), ...Object.values(ATTRIBUTE_ALIASES)].flat());
   const byWaId = new Map<string, ImportRow>();
   const problems: ImportProblem[] = [];
 
@@ -93,6 +99,10 @@ export function mapCsvRows(
     const attributes: Record<string, string> = {};
     for (const [key, value] of Object.entries(record)) {
       if (key && !known.has(key) && value?.trim()) attributes[key] = value.trim();
+    }
+    for (const [field, aliases] of Object.entries(ATTRIBUTE_ALIASES)) {
+      const value = aliases.map((a) => record[a]?.trim()).find(Boolean);
+      if (value) attributes[field] = value;
     }
 
     const previous = byWaId.get(waId);

@@ -9,7 +9,8 @@ const bodySchema = z.discriminatedUnion("kind", [
     name: z.string().min(1),
     language: z.string().min(1),
     params: z.array(z.string()).default([]),
-  }),
+    paramNames: z.array(z.string().regex(/^[a-z0-9_]+$/)).optional(),
+  }).refine((t) => !t.paramNames || t.paramNames.length === t.params.length, "paramNames must match params"),
 ]);
 
 // POST /api/conversations/:id/messages  { kind: "text", text } | { kind: "template", ... }

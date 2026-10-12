@@ -1,19 +1,37 @@
-import { CHANNEL_LABEL, contactName, fullTime } from "@/lib/format";
+"use client";
+
+import { useState } from "react";
+import { CHANNEL_LABEL, classLabel, contactName, fullTime } from "@/lib/format";
 import type { ConversationDetailDTO } from "@/lib/types";
 import { isWindowOpen } from "@/lib/whatsapp-window";
+import { ContactDetailsDialog } from "../contacts/ContactDetailsDialog";
 import { ContactMarketing } from "./ContactMarketing";
 import { ContactPayments } from "./ContactPayments";
 
 /** Right-hand panel: who the customer is. */
 export function ContactPanel({ conversation }: { conversation: ConversationDetailDTO }) {
   const { contact } = conversation;
+  const [editing, setEditing] = useState(false);
+  const school = contact.attributes.school ? String(contact.attributes.school) : null;
+  const klass = classLabel(contact.attributes.class);
 
   return (
     <div className="p-4 text-sm">
-      <h2 className="text-base font-semibold">{contactName(contact)}</h2>
+      <div className="flex items-start justify-between gap-2">
+        <h2 className="text-base font-semibold">{contactName(contact)}</h2>
+        <button className="shrink-0 text-xs text-slate-500 underline hover:text-slate-800" onClick={() => setEditing(true)}>
+          Edit details
+        </button>
+      </div>
+      {editing && (
+        // Saving updates every open inbox through the live stream.
+        <ContactDetailsDialog contactId={contact.id} contact={contact} onClose={() => setEditing(false)} />
+      )}
       <dl className="mt-3 space-y-1.5 text-slate-600">
         {contact.phone && <Row label="Phone" value={contact.phone} />}
         {contact.email && <Row label="Email" value={contact.email} />}
+        {school && <Row label="School" value={school} />}
+        {klass && <Row label="Class" value={klass} />}
         <Row label="Channel" value={CHANNEL_LABEL[conversation.channel]} />
         <Row label="Channel ID" value={conversation.externalId} />
         {conversation.lastInboundAt && <Row label="Last message" value={fullTime(conversation.lastInboundAt)} />}

@@ -3,10 +3,11 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useFetch } from "@/hooks/useFetch";
 import { api } from "@/lib/api-client";
-import { compactNumber, relativeTime } from "@/lib/format";
+import { classLabel, compactNumber, relativeTime } from "@/lib/format";
 import type { ContactRowDTO } from "@/lib/marketing/contacts";
 import type { OptInStatusName } from "@/lib/types";
 import { Card, ErrorNote, Page } from "../ui/Page";
+import { ContactDetailsDialog } from "./ContactDetailsDialog";
 import { ImportDialog } from "./ImportDialog";
 import { OptInBadge } from "./OptInBadge";
 
@@ -135,6 +136,7 @@ export function ContactsScreen() {
           <thead className="border-b border-slate-200 text-xs text-slate-500">
             <tr>
               <th className="px-3 py-2 font-medium">Contact</th>
+              <th className="px-3 py-2 font-medium">School · Class</th>
               <th className="px-3 py-2 font-medium">Tags</th>
               <th className="px-3 py-2 font-medium">Marketing</th>
               <th className="px-3 py-2 font-medium">Last message</th>
@@ -147,14 +149,14 @@ export function ContactsScreen() {
             ))}
             {list && !list.contacts.length && (
               <tr>
-                <td colSpan={5} className="px-3 py-8 text-center text-slate-400">
+                <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
                   No contacts match. Import a CSV, or wait for customers to message you on WhatsApp.
                 </td>
               </tr>
             )}
             {!list && !error && (
               <tr>
-                <td colSpan={5} className="px-3 py-8 text-center text-slate-400">
+                <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
                   Loading…
                 </td>
               </tr>
@@ -192,6 +194,7 @@ function ContactRow({
   onTagsChanged: () => void;
 }) {
   const [editingTags, setEditingTags] = useState(false);
+  const [editingDetails, setEditingDetails] = useState(false);
   const [tagText, setTagText] = useState(c.tags.join(", "));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -223,9 +226,26 @@ function ContactRow({
   return (
     <tr className="border-b border-slate-100 align-top last:border-0">
       <td className="px-3 py-2">
-        <div className="font-medium">{c.name || <span className="text-slate-400">No name</span>}</div>
+        <button className="text-left font-medium hover:underline" onClick={() => setEditingDetails(true)} title="Edit details">
+          {c.name || <span className="text-slate-400">No name</span>}
+        </button>
         <div className="text-xs text-slate-500">{c.phone ?? "—"}</div>
         {c.email && <div className="text-xs text-slate-500">{c.email}</div>}
+        {editingDetails && (
+          <ContactDetailsDialog contactId={c.id} contact={c} onClose={() => setEditingDetails(false)} onSaved={(details) => onChanged(details)} />
+        )}
+      </td>
+      <td className="px-3 py-2">
+        <button className="text-left text-xs" onClick={() => setEditingDetails(true)} title="Edit school and class">
+          {c.attributes.school || c.attributes.class ? (
+            <>
+              <div className="text-slate-700">{String(c.attributes.school ?? "—")}</div>
+              {classLabel(c.attributes.class) && <div className="text-slate-500">{classLabel(c.attributes.class)}</div>}
+            </>
+          ) : (
+            <span className="text-slate-400 hover:text-slate-600">+ Add</span>
+          )}
+        </button>
       </td>
       <td className="px-3 py-2">
         {editingTags ? (
@@ -297,7 +317,7 @@ function OptInApiHelp() {
         {`curl -X POST ${origin}/api/contacts/opt-in \\
   -H "Authorization: Bearer $API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"phone":"+919812345678","name":"Asha","tags":["website"],"attributes":{"city":"Pune"}}'`}
+  -d '{"phone":"+919812345678","name":"Asha","school":"Delhi Public School","class":"8","tags":["website"]}'`}
       </pre>
       <p className="mt-2 text-xs text-slate-500">
         Send <code>&quot;optedIn&quot;: false</code> to record an opt-out instead. Full details: docs/OPT_IN_API.md

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countTemplateParams, parseWhatsAppWebhook } from "../channels/whatsapp";
+import { parseWhatsAppWebhook, templateBodyParams } from "../channels/whatsapp";
 
 // Trimmed-down copies of real Meta webhook payloads.
 const wrap = (value: object) => ({
@@ -99,9 +99,17 @@ describe("parseWhatsAppWebhook", () => {
   });
 });
 
-describe("countTemplateParams", () => {
-  it("counts distinct placeholders", () => {
-    expect(countTemplateParams("Hi {{1}}, your order {{2}} ships {{2}}")).toBe(2);
-    expect(countTemplateParams("No params")).toBe(0);
+describe("templateBodyParams", () => {
+  it("lists distinct numbered placeholders in sending order", () => {
+    expect(templateBodyParams("Hi {{2}}, your order {{1}} ships {{2}}")).toEqual({ params: ["1", "2"], named: false });
+    expect(templateBodyParams("No params")).toEqual({ params: [], named: false });
+  });
+
+  it("keeps named placeholders by name, in order of appearance", () => {
+    expect(templateBodyParams("Hi {{first_name}}, class {{class}} at {{school}}", "NAMED")).toEqual({
+      params: ["first_name", "class", "school"],
+      named: true,
+    });
+    expect(templateBodyParams("Hi {{first_name}}").named).toBe(true);
   });
 });

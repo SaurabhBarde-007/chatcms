@@ -1,4 +1,4 @@
-import { placeholders } from "./templates";
+import { builtinVariable, placeholders } from "./templates";
 
 // Writing your own WhatsApp templates: the editor's draft ⇄ Meta's `components` format,
 // plus the checks Meta applies at review (so problems show up before you submit).
@@ -163,6 +163,34 @@ export function nextPlaceholder(draft: TemplateDraft, name?: string): string {
   if (draft.parameterFormat === "NAMED") return `{{${toTemplateName(name || "value")}}}`;
   const used = placeholders(draft.body.text).map(Number).filter(Number.isFinite);
   return `{{${used.length ? Math.max(...used) + 1 : 1}}}`;
+}
+
+/**
+ * Built-in variables ({{first_name}}, {{school}}…) get a sample value automatically, so
+ * WhatsApp's reviewers see something realistic. Samples you typed are kept.
+ */
+export function withBuiltinSamples(draft: TemplateDraft): TemplateDraft {
+  if (draft.parameterFormat !== "NAMED") return draft;
+  const sample = (name: string | undefined) => (name ? builtinVariable(name)?.sample : undefined);
+
+  let examples = draft.body.examples;
+  for (const v of placeholders(draft.body.text)) {
+    const s = sample(v);
+    if (s && !examples[v]?.trim()) examples = { ...examples, [v]: s };
+  }
+  let header = draft.header;
+  if (header.type === "TEXT" && !header.example.trim()) {
+    const s = sample(placeholders(header.text)[0]);
+    if (s) header = { ...header, example: s };
+  }
+  return examples === draft.body.examples && header === draft.header ? draft : { ...draft, header, body: { ...draft.body, examples } };
+}
+
+/** Built-in variables can't go in {{1}}-style templates that already have numbered variables. */
+export function canUseBuiltins(draft: TemplateDraft, mode: "create" | "edit"): boolean {
+  if (draft.parameterFormat === "NAMED") return true;
+  const used = [...placeholders(draft.body.text), ...(draft.header.type === "TEXT" ? placeholders(draft.header.text) : [])];
+  return mode === "create" && used.length === 0;
 }
 
 const ALIGNED_PLACEHOLDER = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;

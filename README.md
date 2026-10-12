@@ -74,7 +74,7 @@ Marketing adds:
 
 | Table | What it is |
 |---|---|
-| `Contact` (extra columns) | `waId` (one contact per WhatsApp number), `tags`, `attributes` (custom fields), `optInStatus` + source and dates |
+| `Contact` (extra columns) | `waId` (one contact per WhatsApp number), `tags`, `attributes` (custom fields, incl. `school` and `class`), `optInStatus` + source and dates |
 | `ConsentEvent` | Every opt-in / opt-out, with its source. Audit trail + growth chart. |
 | `Segment` | A saved audience: rules, evaluated when a campaign starts |
 | `Campaign` | One template, sent as a `BROADCAST` (audience, schedule) or an `API` campaign (auto-reply trigger, Live/Paused). Holds a template snapshot and how placeholders are filled |
@@ -206,7 +206,7 @@ docs/API.md                     API campaigns: send templates (e.g. OTPs) from y
 
 ### Using it
 
-1. **Contacts**: import a CSV (needs a `phone` column; `name`, `email`, `tags`, `opted_in` and any custom columns are picked up), opt people in by hand, or collect opt-ins from your website through the opt-in API. Customers who message you appear automatically, but not as opted in.
+1. **Contacts**: import a CSV (needs a `phone` column; `name`, `email`, `school`, `class`, `tags`, `opted_in` and any custom columns are picked up), opt people in by hand, or collect opt-ins from your website through the opt-in API. Customers who message you appear automatically, but not as opted in. Click a contact's name (or **Edit details** in the inbox) to set their name, email, school and class.
 2. **Templates**: write your own (see below), start from the **Explore** library, or use ones made in WhatsApp Manager.
 3. **Segments**: save audiences such as "tagged vip, messaged us in the last 30 days, +91". A segment's size is live, and it's re-evaluated when a campaign starts.
 4. **Campaigns → Launch**:
@@ -227,9 +227,21 @@ The Campaigns header shows your number's **quality rating**, **messaging tier** 
 - **Category**: Marketing, Utility or **Authentication**. **Language**.
 - **Time-To-Live (TTL)**: how long WhatsApp keeps trying to deliver to someone who's offline. Authentication 30 sec–15 min, utility 30 sec–12 hours, marketing 12 hours–30 days.
 - **Name**, then **Type** (text, image, video or document). Text templates can have a header, and media templates need a sample file, uploaded to Meta for you (up to 4 MB, or a public https link for bigger files).
-- **Format**: the message, with bold, italic and strikethrough, "Add variable" (`{{1}}` or `{{first_name}}`) and a sample value for each variable.
+- **Format**: the message, with bold, italic and strikethrough, **built-in variables** (see below), "Add variable" (`{{1}}` or `{{your_name}}`) and a sample value for each variable.
 - **Footer**, and **Interactive Actions**: None / Call to Actions / Quick Replies / All. Call-to-actions are a website (optionally personal per customer), a phone number or a copy code; quick replies are reply buttons. The counters show how many of each you can still add. Marketing templates get a one-click "Stop promotions" button, which this app treats as an opt-out.
 - **Authentication** templates replace the message part with: code delivery (copy code, one-tap autofill or zero-tap; the last two need your Android package name and signature hash), the security line, the code's expiry (1–90 minutes) and the button text. WhatsApp writes the text itself.
+
+**Built-in variables** fill themselves from each contact, in campaigns, API campaigns and the inbox:
+
+| Variable | Filled with | If missing |
+|---|---|---|
+| `{{first_name}}` | First word of the contact's name | "there" |
+| `{{phone_number}}` | Their WhatsApp number, e.g. +919812345678 | (always known) |
+| `{{school}}` | Their school | "your school" |
+| `{{class}}` | Their class, e.g. `8` (so write "Class {{class}}") | "your class" |
+| `{{email}}` | Their email | you choose |
+
+Click a chip above the message box to insert one; its sample value is filled in for WhatsApp's review. They need `{{name}}`-style variables, so a new template switches to that style. Common spellings work too: `{{name}}`, `{{school_name}}`, `{{grade}}`, `{{standard}}`. You can change any value or fallback when you set up a campaign.
 
 A live preview shows how it will look, and every WhatsApp rule is checked before you can submit. **Save as draft** keeps unfinished templates in the Draft tab. WhatsApp reviews new templates, usually within minutes, at most 24 hours, and the list refreshes itself until it's decided.
 
@@ -312,7 +324,7 @@ The app works on any Node host: Vercel, Railway, Render, Fly or a VPS, with one 
 
 - **No login.** See the note at the top. With campaigns and payments this matters more: anyone with the URL could message your whole opted-in audience, create or cancel payment links, and change settings. (The `/api/v1` and opt-in APIs are protected by `API_KEY`; the dashboard isn't.)
 - **Replies can only be text or WhatsApp templates.** Sending media from the dashboard isn't supported yet.
-- **The inbox's template picker fills body placeholders only.** Templates with media headers or named placeholders can be sent from Campaigns. Location headers, carousels, flows and catalog buttons aren't supported anywhere yet.
+- **The inbox's template picker fills body placeholders only.** Templates with media headers, header variables or button variables can be sent from Campaigns. Location headers, carousels, flows and catalog buttons aren't supported anywhere yet.
 - **No link-click tracking.** WhatsApp doesn't report URL button taps; quick-reply button taps are tracked.
 - **Payment links can't be sent in a chat outside the 24-hour window.** Use a campaign (a template with a "Payment link" value) instead.
 - **Credit usage is an estimate** from your configured rates; your Meta invoice is the source of truth.

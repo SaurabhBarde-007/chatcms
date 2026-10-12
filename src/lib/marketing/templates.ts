@@ -143,6 +143,52 @@ export const PAYMENT_LINK_PREFIX = "https://rzp.io/";
 /** "attr:city" reads a custom field imported from CSV / the opt-in API. */
 export type ContactField = "name" | "first_name" | "phone" | "email" | `attr:${string}`;
 
+/**
+ * Built-in variables: write {{first_name}}, {{school}}… in a template and they're filled from
+ * each contact automatically (campaigns, API campaigns and the inbox). School and class are
+ * stored as the contact's "school" / "class" custom fields.
+ */
+export const BUILTIN_VARIABLES = [
+  { name: "first_name", label: "First name", field: "first_name", sample: "Asha", fallback: "there" },
+  { name: "phone_number", label: "Phone number", field: "phone", sample: "+919812345678", fallback: "" },
+  { name: "school", label: "School", field: "attr:school", sample: "Delhi Public School", fallback: "your school" },
+  { name: "class", label: "Class", field: "attr:class", sample: "8", fallback: "your class" },
+  { name: "email", label: "Email", field: "email", sample: "asha@example.com", fallback: "" },
+] as const satisfies readonly { name: string; label: string; field: ContactField; sample: string; fallback: string }[];
+
+export type BuiltinVariable = (typeof BUILTIN_VARIABLES)[number];
+
+/** Custom-field keys that belong to built-in variables (not listed again as "Custom: …"). */
+export const BUILTIN_ATTRIBUTES = ["school", "class"];
+
+// Other placeholder names people commonly use for the same thing.
+const BUILTIN_ALIASES: Record<string, BuiltinVariable["name"]> = {
+  name: "first_name",
+  firstname: "first_name",
+  student_name: "first_name",
+  customer_name: "first_name",
+  phone: "phone_number",
+  mobile: "phone_number",
+  mobile_number: "phone_number",
+  whatsapp_number: "phone_number",
+  school_name: "school",
+  grade: "class",
+  standard: "class",
+  email_id: "email",
+  email_address: "email",
+};
+
+/** The built-in variable a named placeholder stands for, e.g. "school_name" → School. */
+export function builtinVariable(placeholder: string): BuiltinVariable | null {
+  const name = BUILTIN_ALIASES[placeholder] ?? placeholder;
+  return BUILTIN_VARIABLES.find((v) => v.name === name) ?? null;
+}
+
+/** "Fill from the contact" for a built-in variable. */
+export function builtinSource(v: BuiltinVariable): ValueSource {
+  return { from: "contact", field: v.field, fallback: v.fallback };
+}
+
 export type TemplateVariables = {
   header: Record<string, ValueSource>;
   /** Public URL of the image / video / document for a media header. */
@@ -218,7 +264,8 @@ export function missingVariables(template: Template, vars: TemplateVariables): s
         if (!s.description.trim()) missing.push(`${where} {{${p}}} payment description`);
         continue;
       }
-      const ok = s && (s.from === "text" ? clean(s.value) : clean(s.fallback));
+      // Every WhatsApp contact has a phone number, so it needs no fallback.
+      const ok = s && (s.from === "text" ? clean(s.value) : s.field === "phone" || clean(s.fallback));
       if (!ok) missing.push(`${where} {{${p}}}${s?.from === "contact" ? " needs a fallback" : ""}`);
     }
   };

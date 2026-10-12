@@ -6,7 +6,7 @@ import { errorResponse } from "@/lib/errors";
 import { upsertFromOptInApi } from "@/lib/marketing/contacts";
 
 // POST /api/contacts/opt-in — for your website / forms ("Send me offers on WhatsApp").
-// Auth: Authorization: Bearer <OPTIN_API_KEY>. Docs: docs/OPT_IN_API.md
+// Auth: Authorization: Bearer <API_KEY>. Docs: docs/OPT_IN_API.md
 
 const bodySchema = z.object({
   phone: z.string().min(5).max(30),
@@ -14,6 +14,8 @@ const bodySchema = z.object({
   email: z.string().max(200).optional(),
   tags: z.array(z.string().max(50)).max(20).optional(),
   attributes: z.record(z.string(), z.string().max(500)).optional(),
+  school: z.string().max(200).optional(),
+  class: z.string().max(50).optional(),
   optedIn: z.boolean().optional(),
 });
 

@@ -28,7 +28,8 @@ export type InboundMessage = {
 /** A reply we send to a customer. */
 export type OutgoingMessage =
   | { kind: "text"; text: string }
-  | { kind: "template"; name: string; language: string; params: string[] };
+  /** `paramNames` for {{first_name}}-style templates: the name of each value in `params`. */
+  | { kind: "template"; name: string; language: string; params: string[]; paramNames?: string[] };
 
 export type SendResult = {
   /** The id the channel gave the message (e.g. WhatsApp wamid), if any. */

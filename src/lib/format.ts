@@ -10,6 +10,13 @@ export function contactName(c: ContactDTO): string {
 }
 
 /** "14:05" today, "Mon" this week, otherwise "12 Sep". */
+/** A contact's class for display: "8" → "Class 8"; "Class 8" / "Grade 5" stay as they are. */
+export function classLabel(value: unknown): string | null {
+  const v = value === null || value === undefined ? "" : String(value).trim();
+  if (!v) return null;
+  return /^(class|grade|std|standard)\b/i.test(v) ? v : `Class ${v}`;
+}
+
 export function shortTime(iso: string): string {
   const d = new Date(iso);
   const now = new Date();

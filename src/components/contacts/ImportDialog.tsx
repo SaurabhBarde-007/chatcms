@@ -8,7 +8,7 @@ import { ErrorNote, Modal } from "../ui/Page";
 
 type Result = ImportSummary & { skippedRows: number };
 
-/** Upload a CSV of contacts (phone, name, email, tags, opted_in, any custom columns). */
+/** Upload a CSV of contacts (phone, name, email, school, class, tags, opted_in, any custom columns). */
 export function ImportDialog({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
   const [file, setFile] = useState<{ name: string; text: string; rows: number; columns: string[] } | null>(null);
   const [countryCode, setCountryCode] = useState("91");
@@ -84,8 +84,9 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
           <div>
             <input type="file" accept=".csv,text/csv" onChange={(e) => pick(e.target.files?.[0])} className="text-sm" />
             <p className="mt-1.5 text-xs text-slate-500">
-              Needs a <b>phone</b> column. Recognised columns: name (or first_name + last_name), email, tags (separated by , or ;),
-              opted_in (yes/no). Any other column becomes a custom field you can use in campaign messages.
+              Needs a <b>phone</b> column. Recognised columns: name (or first_name + last_name), email, school, class (or grade /
+              standard), tags (separated by , or ;), opted_in (yes/no). Any other column becomes a custom field you can use in
+              campaign messages.
             </p>
             {file && (
               <p className="mt-2 rounded bg-slate-50 px-2 py-1.5 text-xs text-slate-600">

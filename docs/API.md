@@ -36,6 +36,7 @@ Create the campaign first: **Campaigns → Launch → API Campaign**. Pick an ap
 | `phone` | yes | Full international number. The contact is created if new. |
 | `name`, `email` | no | Saved on the contact if we didn't have them. |
 | `params` | no | Placeholder values for this message (see below). They override the campaign's own values. |
+| `school`, `class` | no | Saved on the contact, for the built-in `{{school}}` / `{{class}}` variables. |
 | `tags`, `attributes` | no | Added to the contact (tags) and merged into its custom fields (attributes). |
 
 ### `params`

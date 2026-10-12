@@ -61,6 +61,13 @@ export function Composer({ conversation, onSent }: Props) {
 
       {templateMode ? (
         <TemplatePicker
+          key={conversation.id}
+          contact={{
+            name: conversation.contact.name,
+            email: conversation.contact.email,
+            waId: conversation.externalId,
+            attributes: conversation.contact.attributes,
+          }}
           sending={sending}
           onSend={(t) => send({ kind: "template", ...t })}
           onCancel={windowOpen ? () => setUseTemplate(false) : undefined}

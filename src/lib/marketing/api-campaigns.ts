@@ -3,6 +3,7 @@ import type { Campaign } from "@/generated/prisma/client";
 import { db } from "../db";
 import { UserError } from "../errors";
 import { type Outcome, sendApiRecipient } from "./campaign-runner";
+import { profileAttributes } from "./contacts";
 import { isOptOutMessage } from "./opt-out";
 import { type ApiTrigger, matchingCampaigns, parseTrigger } from "./api-trigger";
 import { normalizeWaId, waIdToPhone } from "./phone";
@@ -72,6 +73,8 @@ export const apiSendSchema = z.object({
   params: z.record(z.string(), z.union([z.string().max(1000), z.number()])).optional(),
   tags: z.array(z.string().max(50)).max(20).optional(),
   attributes: z.record(z.string(), z.string().max(500)).optional(),
+  school: z.string().max(200).optional(),
+  class: z.string().max(50).optional(),
 });
 export type ApiSendInput = z.infer<typeof apiSendSchema>;
 
@@ -87,6 +90,7 @@ export async function sendViaApi(input: ApiSendInput): Promise<{ recipientId: st
 
   const tags = (input.tags ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean);
   const existing = await db.contact.findUnique({ where: { waId } });
+  const attributes = profileAttributes(input);
   const contact = existing
     ? await db.contact.update({
         where: { id: existing.id },
@@ -94,11 +98,11 @@ export async function sendViaApi(input: ApiSendInput): Promise<{ recipientId: st
           name: existing.name ? undefined : input.name?.trim() || undefined,
           email: existing.email ? undefined : input.email?.trim() || undefined,
           tags: tags.length ? [...new Set([...existing.tags, ...tags])] : undefined,
-          attributes: input.attributes ? { ...(existing.attributes as object), ...input.attributes } : undefined,
+          attributes: attributes ? { ...(existing.attributes as object), ...attributes } : undefined,
         },
       })
     : await db.contact.create({
-        data: { waId, phone: waIdToPhone(waId), name: input.name?.trim() || null, email: input.email?.trim() || null, tags, attributes: input.attributes ?? {} },
+        data: { waId, phone: waIdToPhone(waId), name: input.name?.trim() || null, email: input.email?.trim() || null, tags, attributes: attributes ?? {} },
       });
 
   const params = input.params ? Object.fromEntries(Object.entries(input.params).map(([k, v]) => [k, String(v)])) : undefined;

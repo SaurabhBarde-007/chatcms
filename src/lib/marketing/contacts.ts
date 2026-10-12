@@ -1,6 +1,7 @@
 import type { OptInStatus, Prisma } from "@/generated/prisma/client";
 import { db } from "../db";
 import { UserError } from "../errors";
+import { publish } from "../realtime/publish";
 import { setConsent } from "./consent";
 import type { ImportProblem, ImportRow } from "./csv";
 import { normalizeWaId, waIdToPhone } from "./phone";
@@ -108,12 +109,38 @@ export async function listAttributeKeys(): Promise<string[]> {
   return rows.map((r) => r.key);
 }
 
+/** Top-level `school` / `class` (opt-in and campaign APIs) are stored as custom fields. */
+export function profileAttributes(input: { attributes?: Record<string, string>; school?: string; class?: string }) {
+  const attributes = { ...input.attributes };
+  for (const key of ["school", "class"] as const) {
+    const value = input[key]?.trim();
+    if (value) attributes[key] = value;
+  }
+  return Object.keys(attributes).length ? attributes : undefined;
+}
+
 export async function updateContact(
   id: string,
-  input: { name?: string | null; email?: string | null; tags?: string[]; optInStatus?: "OPTED_IN" | "OPTED_OUT" },
+  input: {
+    name?: string | null;
+    email?: string | null;
+    tags?: string[];
+    optInStatus?: "OPTED_IN" | "OPTED_OUT";
+    /** Custom fields to set; null or "" removes one. Others are kept. */
+    attributes?: Record<string, string | null>;
+  },
 ) {
-  const contact = await db.contact.findUnique({ where: { id } });
+  const contact = await db.contact.findUnique({ where: { id }, include: { conversations: { select: { id: true } } } });
   if (!contact) throw new ContactError("Contact not found");
+
+  let attributes: Record<string, unknown> | undefined;
+  if (input.attributes) {
+    attributes = { ...(contact.attributes as Record<string, unknown>) };
+    for (const [key, value] of Object.entries(input.attributes)) {
+      if (value?.trim()) attributes[key] = value.trim();
+      else delete attributes[key];
+    }
+  }
 
   await db.$transaction(async (tx) => {
     await tx.contact.update({
@@ -122,10 +149,13 @@ export async function updateContact(
         ...(input.name !== undefined && { name: input.name?.trim() || null }),
         ...(input.email !== undefined && { email: input.email?.trim() || null }),
         ...(input.tags && { tags: [...new Set(input.tags.map((t) => t.trim().toLowerCase()).filter(Boolean))] }),
+        ...(attributes && { attributes: attributes as Prisma.InputJsonObject }),
       },
     });
     if (input.optInStatus) await setConsent(id, input.optInStatus, "manual", tx);
   });
+  // Open inboxes show the contact's details next to the chat.
+  await Promise.all(contact.conversations.map((c) => publish({ kind: "conversation", id: c.id })));
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +168,8 @@ export type OptInRequest = {
   email?: string;
   tags?: string[];
   attributes?: Record<string, string>;
+  school?: string;
+  class?: string;
   /** false records an opt-out instead. Default true. */
   optedIn?: boolean;
 };
@@ -148,6 +180,7 @@ export async function upsertFromOptInApi(input: OptInRequest): Promise<{ contact
 
   const existing = await db.contact.findUnique({ where: { waId } });
   const tags = (input.tags ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean);
+  const attributes = profileAttributes(input);
 
   return db.$transaction(async (tx) => {
     const contact = existing
@@ -157,7 +190,7 @@ export async function upsertFromOptInApi(input: OptInRequest): Promise<{ contact
             name: input.name?.trim() || undefined,
             email: input.email?.trim() || undefined,
             tags: [...new Set([...existing.tags, ...tags])],
-            attributes: { ...(existing.attributes as object), ...input.attributes },
+            attributes: { ...(existing.attributes as object), ...attributes },
           },
         })
       : await tx.contact.create({
@@ -167,7 +200,7 @@ export async function upsertFromOptInApi(input: OptInRequest): Promise<{ contact
             name: input.name?.trim() || null,
             email: input.email?.trim() || null,
             tags,
-            attributes: input.attributes ?? {},
+            attributes: attributes ?? {},
           },
         });
     await setConsent(contact.id, input.optedIn === false ? "OPTED_OUT" : "OPTED_IN", "api", tx);

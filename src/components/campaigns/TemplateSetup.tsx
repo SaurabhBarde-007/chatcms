@@ -3,8 +3,13 @@
 import { IndianRupee } from "lucide-react";
 import type { ReactNode } from "react";
 import {
+  BUILTIN_ATTRIBUTES,
+  BUILTIN_VARIABLES,
+  builtinSource,
+  builtinVariable,
   EMPTY_VARIABLES,
   renderTemplateText,
+  type ContactField,
   type Template,
   type TemplateVariables,
   type ValueSource,
@@ -12,24 +17,30 @@ import {
 
 // Choosing a template and filling its placeholders — shared by the broadcast and API campaign forms.
 
-export const SAMPLE = { name: "Asha Sharma", email: "asha@example.com", waId: "919812345678", attributes: {} };
+export const SAMPLE = {
+  name: "Asha Sharma",
+  email: "asha@example.com",
+  waId: "919812345678",
+  attributes: { school: "Delhi Public School", class: "8" },
+};
 export type CampaignKind = "BROADCAST" | "API";
 
 /**
- * Sensible starting values: {{1}} / {{first_name}} / {{name}} → the contact's first name.
- * Other placeholders: fixed text, or (API campaigns without auto-reply) a value from each API call.
+ * Sensible starting values: built-in variables ({{first_name}}, {{school}}…) and {{1}} come from
+ * the contact. Other placeholders: fixed text, or (API campaigns without auto-reply) a value from
+ * each API call.
  */
 export function defaultVariables(t: Template, kind: CampaignKind, autoReply = false): TemplateVariables {
   if (t.category === "AUTHENTICATION") {
     // The one-time code comes with each API call (params.code).
     return { ...EMPTY_VARIABLES, body: { "1": { from: "api" } } };
   }
-  const guess = (p: string): ValueSource =>
-    p === "1" || /name/.test(p)
-      ? { from: "contact", field: "first_name", fallback: "there" }
-      : kind === "API" && !autoReply
-        ? { from: "api" }
-        : { from: "text", value: "" };
+  const builtin = (p: string) => (p === "1" ? BUILTIN_VARIABLES[0] : t.parameterFormat === "NAMED" ? builtinVariable(p) : null);
+  const guess = (p: string): ValueSource => {
+    const v = builtin(p);
+    if (v) return builtinSource(v);
+    return kind === "API" && !autoReply ? { from: "api" } : { from: "text", value: "" };
+  };
   const fill = (params: string[]) => Object.fromEntries(params.map((p) => [p, guess(p)]));
   return {
     header: t.header?.format === "TEXT" ? fill(t.header.params) : {},
@@ -162,11 +173,10 @@ export function TemplateSetup({
   );
 }
 
+// The built-in variables' fields, plus the full name.
 const CONTACT_FIELDS = [
-  { value: "contact:first_name", label: "First name" },
+  ...BUILTIN_VARIABLES.map((v) => ({ value: `contact:${v.field}`, label: v.label })),
   { value: "contact:name", label: "Full name" },
-  { value: "contact:phone", label: "Phone" },
-  { value: "contact:email", label: "Email" },
 ];
 
 /** One placeholder: where its value comes from (+ the text, fallback or payment details). */
@@ -196,7 +206,10 @@ function ValueSourceRow({
     if (k === "text") onChange({ from: "text", value: "" });
     else if (k === "api") onChange({ from: "api" });
     else if (k === "payment") onChange({ from: "payment", amount: 0, description: "", expiresInHours: 72 });
-    else onChange({ from: "contact", field: k.slice("contact:".length) as never, fallback: "" });
+    else {
+      const field = k.slice("contact:".length) as ContactField;
+      onChange({ from: "contact", field, fallback: BUILTIN_VARIABLES.find((v) => v.field === field)?.fallback ?? "" });
+    }
   }
 
   let detail: ReactNode;
@@ -267,7 +280,7 @@ function ValueSourceRow({
             {f.label}
           </option>
         ))}
-        {fields.map((f) => (
+        {fields.filter((f) => !BUILTIN_ATTRIBUTES.includes(f)).map((f) => (
           <option key={f} value={`contact:attr:${f}`}>
             Custom: {f}
           </option>

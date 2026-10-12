@@ -23,6 +23,8 @@ Content-Type: application/json
   "name": "Asha Sharma",
   "email": "asha@example.com",
   "tags": ["website", "diwali-2026"],
+  "school": "Delhi Public School",
+  "class": "8",
   "attributes": { "city": "Pune", "plan": "gold" },
   "optedIn": true
 }
@@ -33,6 +35,7 @@ Content-Type: application/json
 | `phone` | yes | Full international number with country code. `+91 98123-45678` and `0091…` work too. |
 | `name`, `email` | no | Overwrite what we have. |
 | `tags` | no | Added to the contact's existing tags (lowercased). |
+| `school`, `class` | no | The student's school and class, for the built-in `{{school}}` and `{{class}}` template variables. Send the class as just `8` or `10-B`. |
 | `attributes` | no | Custom fields, merged with existing ones. Usable in campaign messages as "Custom: city", etc. |
 | `optedIn` | no | Default `true`. Send `false` to record an opt-out (e.g. they unticked the box in their profile). |
 

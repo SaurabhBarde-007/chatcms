@@ -1,5 +1,5 @@
 import { env } from "../env";
-import { parseTemplate, type RawTemplate, type Template } from "../marketing/templates";
+import { parseTemplate, placeholders, type RawTemplate, type Template } from "../marketing/templates";
 import type { ChannelAdapter, InboundMessage } from "./types";
 
 // WhatsApp Cloud API: https://developers.facebook.com/docs/whatsapp/cloud-api
@@ -80,7 +80,14 @@ export const whatsappAdapter: ChannelAdapter = {
               name: message.name,
               language: { code: message.language },
               components: message.params.length
-                ? [{ type: "body", parameters: message.params.map((text) => ({ type: "text", text })) }]
+                ? [
+                    {
+                      type: "body",
+                      parameters: message.params.map((text, i) =>
+                        message.paramNames ? { type: "text", parameter_name: message.paramNames[i], text } : { type: "text", text },
+                      ),
+                    },
+                  ]
                 : undefined,
             },
           };
@@ -101,8 +108,10 @@ export type WhatsAppTemplate = {
   name: string;
   language: string;
   body: string;
-  /** Number of distinct {{1}}, {{2}}... placeholders in the body. */
-  paramCount: number;
+  /** The body's placeholders in the order values are sent: ["1", "2"] or ["first_name", "school"]. */
+  params: string[];
+  /** {{first_name}}-style placeholders (sent with their names). */
+  named: boolean;
 };
 
 /** All APPROVED templates, in full (header, body, buttons…). Follows paging. */
@@ -121,18 +130,21 @@ export async function listTemplates(): Promise<Template[]> {
 
 export async function listApprovedTemplates(): Promise<WhatsAppTemplate[]> {
   const res = await graph<{ data: RawTemplate[] }>(
-    `${env.whatsapp.businessAccountId}/message_templates?fields=name,language,status,components&limit=200`,
+    `${env.whatsapp.businessAccountId}/message_templates?fields=name,language,status,parameter_format,components&limit=200`,
   );
   return res.data
     .filter((t) => t.status === "APPROVED")
     .map((t) => {
       const body = t.components?.find((c) => c.type === "BODY")?.text ?? "";
-      return { name: t.name, language: t.language, body, paramCount: countTemplateParams(body) };
+      return { name: t.name, language: t.language, body, ...templateBodyParams(body, t.parameter_format) };
     });
 }
 
-export function countTemplateParams(body: string): number {
-  return new Set(body.match(/\{\{\d+\}\}/g) ?? []).size;
+/** A body's placeholders, in the order their values are sent. */
+export function templateBodyParams(body: string, parameterFormat?: string): { params: string[]; named: boolean } {
+  const names = placeholders(body);
+  const named = parameterFormat?.toUpperCase() === "NAMED" || names.some((n) => !/^\d+$/.test(n));
+  return { params: named ? names : names.sort((a, b) => Number(a) - Number(b)), named };
 }
 
 // ---------------------------------------------------------------------------

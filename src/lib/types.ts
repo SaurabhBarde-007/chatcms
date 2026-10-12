@@ -13,6 +13,8 @@ export type ContactDTO = {
   email: string | null;
   optInStatus: OptInStatusName;
   tags: string[];
+  /** Custom fields, incl. "school" and "class". */
+  attributes: Record<string, unknown>;
 };
 
 export type ConversationSummaryDTO = {
@@ -49,7 +51,9 @@ export type TemplateDTO = {
   name: string;
   language: string;
   body: string;
-  paramCount: number;
+  /** The body's placeholders in the order values are sent: ["1", "2"] or ["first_name", "school"]. */
+  params: string[];
+  named: boolean;
 };
 
 /**

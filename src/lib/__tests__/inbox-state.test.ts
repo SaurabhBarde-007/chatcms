@@ -16,7 +16,7 @@ function conv(id: string, lastMessageAt: string, extra: Partial<ConversationSumm
     channel: "WHATSAPP",
     status: "HUMAN",
     externalId: `ext-${id}`,
-    contact: { id: `contact-${id}`, name: id, phone: null, email: null, optInStatus: "UNKNOWN", tags: [] },
+    contact: { id: `contact-${id}`, name: id, phone: null, email: null, optInStatus: "UNKNOWN", tags: [], attributes: {} },
     lastMessageAt,
     lastMessageText: null,
     lastInboundAt: null,

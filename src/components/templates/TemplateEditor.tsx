@@ -7,6 +7,7 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "re
 import { api } from "@/lib/api-client";
 import type { TemplateRowDTO } from "@/lib/marketing/template-admin";
 import {
+  canUseBuiltins,
   type DraftButton,
   type DraftCategory,
   type DraftHeader,
@@ -22,10 +23,11 @@ import {
   toTemplateName,
   TTL_RANGES,
   validateDraft,
+  withBuiltinSamples,
 } from "@/lib/marketing/template-builder";
 import type { DraftRowDTO } from "@/lib/marketing/template-drafts";
 import { TEMPLATE_STARTERS } from "@/lib/marketing/template-starters";
-import { placeholders } from "@/lib/marketing/templates";
+import { BUILTIN_VARIABLES, builtinVariable, placeholders } from "@/lib/marketing/templates";
 import { ErrorNote } from "../ui/Page";
 import { TemplatePreview } from "./TemplatePreview";
 import { REJECTION_REASON, TemplateStatusBadge } from "./TemplateStatusBadge";
@@ -115,7 +117,7 @@ export function TemplateEditor({ id }: { id?: string }) {
   const problems = validateDraft(draft, mode);
   const update = (change: Partial<TemplateDraft>) => {
     setNotice(null);
-    setDraft((d) => ({ ...d, ...change }));
+    setDraft((d) => withBuiltinSamples({ ...d, ...change }));
   };
   const setAuth = (change: Partial<TemplateDraft["auth"]>) => update({ auth: { ...draft.auth, ...change } });
   const setBody = (text: string) => update({ body: { ...draft.body, text } });
@@ -135,6 +137,12 @@ export function TemplateEditor({ id }: { id?: string }) {
     insert(nextPlaceholder(draft, varName));
     setVarName("");
   }
+  /** Built-in variables are named, so a new template without variables switches to {{name}} style. */
+  function addBuiltin(name: string) {
+    if (draft.parameterFormat !== "NAMED") update({ parameterFormat: "NAMED" });
+    insert(`{{${name}}}`);
+  }
+  const builtinsAllowed = canUseBuiltins(draft, mode);
 
   // ---- header media -------------------------------------------------------------
 
@@ -434,6 +442,26 @@ export function TemplateEditor({ id }: { id?: string }) {
                           <Plus size={14} /> Add variable
                         </button>
                       </div>
+                      <div className="mb-2 flex flex-wrap items-center gap-1.5" role="group" aria-label="Built-in variables">
+                        <span className="text-xs text-slate-500">Built-in:</span>
+                        {BUILTIN_VARIABLES.map((v) => (
+                          <button
+                            key={v.name}
+                            type="button"
+                            className="rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs text-teal-800 hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={!builtinsAllowed}
+                            title={builtinsAllowed ? `Insert {{${v.name}}}, filled with each contact's ${v.label.toLowerCase()}` : undefined}
+                            onClick={() => addBuiltin(v.name)}
+                          >
+                            {v.label}
+                          </button>
+                        ))}
+                        {!builtinsAllowed && (
+                          <span className="text-[11px] text-slate-500">
+                            {mode === "create" ? "Switch to {{name}} variables to use these." : "This template uses {{1}}-style variables."}
+                          </span>
+                        )}
+                      </div>
                       <Counter value={draft.body.text} max={LIMITS.body}>
                         <textarea
                           ref={bodyRef}
@@ -453,6 +481,9 @@ export function TemplateEditor({ id }: { id?: string }) {
                       {bodyVars.length > 0 && (
                         <div className="mt-2 space-y-2 rounded-md bg-slate-50 p-3">
                           <p className="text-xs font-medium text-slate-600">Sample values (WhatsApp reviewers see these; customers don&apos;t)</p>
+                          {bodyVars.some((v) => draft.parameterFormat === "NAMED" && builtinVariable(v)) && (
+                            <p className="text-[11px] text-slate-500">Built-in variables are filled from each contact&apos;s details when you send.</p>
+                          )}
                           {bodyVars.map((v) => (
                             <SampleRow
                               key={v}
