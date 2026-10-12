@@ -48,7 +48,9 @@ type RawComponent = {
 
 const PLACEHOLDER = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
 const MEDIA_HEADERS = new Set(["IMAGE", "VIDEO", "DOCUMENT"]);
-const SIMPLE_BUTTONS = new Set(["QUICK_REPLY", "PHONE_NUMBER", "VOICE_CALL", "URL", "COPY_CODE"]);
+const SIMPLE_BUTTONS = new Set(["QUICK_REPLY", "PHONE_NUMBER", "VOICE_CALL", "URL", "COPY_CODE", "OTP"]);
+/** WhatsApp limit for one-time codes in authentication templates. */
+export const MAX_OTP_LENGTH = 15;
 
 /** Placeholder names in the order they first appear: ["1", "2"] or ["first_name", "order_no"]. */
 export function placeholders(text: string | undefined | null): string[] {
@@ -74,13 +76,17 @@ export function parseTemplate(raw: RawTemplate): Template {
     : null;
 
   const bodyText = find("BODY")?.text ?? "";
+  const isAuth = raw.category?.toUpperCase() === "AUTHENTICATION";
   const buttons: TemplateButton[] = (find("BUTTONS")?.buttons ?? []).map((b, index) => {
-    const type = b.type?.toUpperCase() ?? "";
+    const raw = b.type?.toUpperCase() ?? "";
+    // Authentication templates' code button comes back from WhatsApp as a URL button.
+    const type = raw === "OTP" || (isAuth && raw === "URL") ? "OTP" : raw;
     return {
       index,
       type,
       text: b.text ?? "",
       url: b.url,
+      // OTP buttons repeat the body's code, so they have no placeholder of their own.
       params: type === "URL" ? placeholders(b.url) : type === "COPY_CODE" ? ["coupon_code"] : [],
     };
   });
@@ -120,7 +126,19 @@ export function parseTemplate(raw: RawTemplate): Template {
 /** Where a placeholder's value comes from. */
 export type ValueSource =
   | { from: "text"; value: string }
-  | { from: "contact"; field: ContactField; fallback: string };
+  | { from: "contact"; field: ContactField; fallback: string }
+  /**
+   * A Razorpay payment link made for each recipient when the message is sent.
+   * `amount` in rupees, or `amountField` to read it from a custom field (e.g. "fee").
+   */
+  | { from: "payment"; amount: number; amountField?: string; description: string; expiresInHours?: number }
+  /** API campaigns: given in each API call's params (e.g. an OTP code or an order number). */
+  | { from: "api" };
+
+/** What a payment-link value looks like in previews. */
+export const SAMPLE_PAYMENT_LINK = "https://rzp.io/rzp/sample";
+/** Payment links can go in a URL button only if its address starts with this. */
+export const PAYMENT_LINK_PREFIX = "https://rzp.io/";
 
 /** "attr:city" reads a custom field imported from CSV / the opt-in API. */
 export type ContactField = "name" | "first_name" | "phone" | "email" | `attr:${string}`;
@@ -163,7 +181,29 @@ function clean(value: string): string {
 export function resolveValue(source: ValueSource | undefined, contact: TemplateContact): string {
   if (!source) return "";
   if (source.from === "text") return clean(source.value);
+  // Payment links are created per recipient by the sender, and API values come with each call;
+  // both are swapped in as text before this.
+  if (source.from === "payment" || source.from === "api") return "";
   return clean(contactValue(contact, source.field)) || clean(source.fallback);
+}
+
+/** True if some placeholder is filled from each API call's params. */
+export function usesApiValues(vars: TemplateVariables): boolean {
+  const all = [...Object.values(vars.header), ...Object.values(vars.body), ...Object.values(vars.buttons).flatMap((b) => Object.values(b))];
+  return all.some((s) => s.from === "api");
+}
+
+/** Every placeholder that takes a payment link: where it is, and its settings. */
+export function paymentSources(template: Template, vars: TemplateVariables) {
+  const found: { group: "header" | "body" | "button"; key: string; buttonIndex?: number; source: Extract<ValueSource, { from: "payment" }> }[] = [];
+  for (const [key, source] of Object.entries(vars.header)) if (source.from === "payment") found.push({ group: "header", key, source });
+  for (const [key, source] of Object.entries(vars.body)) if (source.from === "payment") found.push({ group: "body", key, source });
+  for (const b of template.buttons) {
+    for (const [key, source] of Object.entries(vars.buttons[String(b.index)] ?? {})) {
+      if (source.from === "payment") found.push({ group: "button", key, buttonIndex: b.index, source });
+    }
+  }
+  return found;
 }
 
 /** Human-readable list of what's still missing before this template can be sent. */
@@ -172,6 +212,12 @@ export function missingVariables(template: Template, vars: TemplateVariables): s
   const check = (where: string, params: string[], sources: Record<string, ValueSource> | undefined) => {
     for (const p of params) {
       const s = sources?.[p];
+      if (s?.from === "api") continue;
+      if (s?.from === "payment") {
+        if (!(s.amount > 0) && !s.amountField) missing.push(`${where} {{${p}}} payment amount`);
+        if (!s.description.trim()) missing.push(`${where} {{${p}}} payment description`);
+        continue;
+      }
       const ok = s && (s.from === "text" ? clean(s.value) : clean(s.fallback));
       if (!ok) missing.push(`${where} {{${p}}}${s?.from === "contact" ? " needs a fallback" : ""}`);
     }
@@ -183,6 +229,15 @@ export function missingVariables(template: Template, vars: TemplateVariables): s
   }
   check("Body", template.body.params, vars.body);
   for (const b of template.buttons) check(`Button "${b.text}"`, b.params, vars.buttons[String(b.index)]);
+
+  const payments = paymentSources(template, vars);
+  if (payments.length > 1) missing.push("Only one placeholder can be a payment link");
+  for (const p of payments) {
+    const button = p.group === "button" ? template.buttons.find((b) => b.index === p.buttonIndex) : null;
+    if (button && !(button.url ?? "").startsWith(PAYMENT_LINK_PREFIX)) {
+      missing.push(`Button "${button.text}" can't hold a payment link (its address must start with ${PAYMENT_LINK_PREFIX}); use a body placeholder instead`);
+    }
+  }
   return missing;
 }
 
@@ -198,7 +253,9 @@ function textParams(
     template.parameterFormat === "POSITIONAL" ? [...params].sort((a, b) => Number(a) - Number(b)) : params;
   return ordered.map((p) => {
     const text = resolveValue(sources?.[p], contact);
-    if (!text) throw new TemplateValueError(`No value for {{${p}}}`);
+    if (!text) {
+      throw new TemplateValueError(sources?.[p]?.from === "api" ? `No value for {{${p}}}: send it in the API call's params` : `No value for {{${p}}}`);
+    }
     return template.parameterFormat === "NAMED" ? { type: "text", parameter_name: p, text } : { type: "text", text };
   });
 }
@@ -228,6 +285,14 @@ export function buildTemplateComponents(
   }
 
   for (const button of template.buttons) {
+    if (button.type === "OTP") {
+      // Authentication: the one-time code goes in the body AND the button.
+      const code = resolveValue(vars.body["1"], contact);
+      if (!code) throw new TemplateValueError("No verification code");
+      if (code.length > MAX_OTP_LENGTH) throw new TemplateValueError(`Verification codes can be at most ${MAX_OTP_LENGTH} characters`);
+      components.push({ type: "button", sub_type: "url", index: String(button.index), parameters: [{ type: "text", text: code }] });
+      continue;
+    }
     if (!button.params.length) continue;
     const sources = vars.buttons[String(button.index)];
     if (button.type === "COPY_CODE") {
@@ -255,7 +320,9 @@ export function buildTemplateComponents(
 /** The message as the customer will read it — for previews and the inbox thread. */
 export function renderTemplateText(template: Template, vars: TemplateVariables, contact: TemplateContact): string {
   const fill = (text: string, sources: Record<string, ValueSource> | undefined) =>
-    text.replace(PLACEHOLDER, (m, p: string) => resolveValue(sources?.[p], contact) || m);
+    text.replace(PLACEHOLDER, (m, p: string) =>
+      sources?.[p]?.from === "payment" ? SAMPLE_PAYMENT_LINK : sources?.[p]?.from === "api" ? `[${p}]` : resolveValue(sources?.[p], contact) || m,
+    );
 
   const parts: string[] = [];
   if (template.header?.format === "TEXT" && template.header.text) parts.push(`*${fill(template.header.text, vars.header)}*`);

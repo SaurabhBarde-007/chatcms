@@ -6,7 +6,7 @@ import { placeholders } from "./templates";
 //
 // Docs: https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/components
 
-export type DraftCategory = "MARKETING" | "UTILITY";
+export type DraftCategory = "MARKETING" | "UTILITY" | "AUTHENTICATION";
 export type DraftFormat = "POSITIONAL" | "NAMED";
 export type MediaFormat = "IMAGE" | "VIDEO" | "DOCUMENT";
 
@@ -23,6 +23,24 @@ export type DraftButton =
   | { type: "PHONE_NUMBER"; text: string; phone: string }
   | { type: "COPY_CODE"; example: string };
 
+/** One-time passcode templates. WhatsApp writes the text; you choose how the code is delivered. */
+export type OtpType = "COPY_CODE" | "ONE_TAP" | "ZERO_TAP";
+export type AuthSettings = {
+  otpType: OtpType;
+  /** Adds "For your security, do not share this code." */
+  securityRecommendation: boolean;
+  /** Adds "This code expires in N minutes." (1–90), or null for no expiry line. */
+  codeExpirationMinutes: number | null;
+  /** Copy-code button label (empty = WhatsApp's default, e.g. "Copy code"). */
+  buttonText: string;
+  /** One-tap / zero-tap: label of the autofill button. */
+  autofillText: string;
+  /** One-tap / zero-tap: your Android app. */
+  packageName: string;
+  signatureHash: string;
+  zeroTapTermsAccepted: boolean;
+};
+
 export type TemplateDraft = {
   name: string;
   language: string;
@@ -32,6 +50,10 @@ export type TemplateDraft = {
   body: { text: string; examples: Record<string, string> };
   footer: string;
   buttons: DraftButton[];
+  /** Time-to-live: how long WhatsApp keeps trying to deliver. Off = WhatsApp's default. */
+  ttl: { enabled: boolean; seconds: number };
+  /** Only used for AUTHENTICATION templates. */
+  auth: AuthSettings;
 };
 
 export const LIMITS = {
@@ -50,6 +72,17 @@ export const LIMITS = {
   copyCodeButtons: 1,
 };
 
+export const DEFAULT_AUTH: AuthSettings = {
+  otpType: "COPY_CODE",
+  securityRecommendation: true,
+  codeExpirationMinutes: 10,
+  buttonText: "Copy code",
+  autofillText: "Autofill",
+  packageName: "",
+  signatureHash: "",
+  zeroTapTermsAccepted: false,
+};
+
 export const EMPTY_DRAFT: TemplateDraft = {
   name: "",
   language: "en",
@@ -59,7 +92,38 @@ export const EMPTY_DRAFT: TemplateDraft = {
   body: { text: "", examples: {} },
   footer: "",
   buttons: [],
+  ttl: { enabled: false, seconds: 24 * 3600 },
+  auth: DEFAULT_AUTH,
 };
+
+/** WhatsApp's allowed time-to-live per category, in seconds, and its default. */
+export const TTL_RANGES: Record<DraftCategory, { min: number; max: number; default: string }> = {
+  AUTHENTICATION: { min: 30, max: 900, default: "10 minutes" },
+  UTILITY: { min: 30, max: 43_200, default: "30 days" },
+  MARKETING: { min: 43_200, max: 2_592_000, default: "30 days" },
+};
+
+/** "45 sec", "10 min", "12 hours", "30 days" */
+export function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds} sec`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  if (seconds < 86_400) return `${+(seconds / 3600).toFixed(1)} hours`;
+  return `${+(seconds / 86_400).toFixed(1)} days`;
+}
+
+/** Fill in fields missing from older drafts (saved before TTL / authentication existed). */
+export function normalizeDraft(d: Partial<TemplateDraft>): TemplateDraft {
+  return { ...EMPTY_DRAFT, ...d, ttl: { ...EMPTY_DRAFT.ttl, ...d.ttl }, auth: { ...DEFAULT_AUTH, ...d.auth } };
+}
+
+/** What an authentication message says (WhatsApp writes it; shown in the preview). */
+export function authMessage(auth: AuthSettings, code = "123456"): { body: string; footer: string; button: string } {
+  return {
+    body: `*${code}* is your verification code.${auth.securityRecommendation ? " For your security, do not share this code." : ""}`,
+    footer: auth.codeExpirationMinutes ? `This code expires in ${auth.codeExpirationMinutes} minutes.` : "",
+    button: auth.otpType === "COPY_CODE" ? auth.buttonText.trim() || "Copy code" : auth.autofillText.trim() || "Autofill",
+  };
+}
 
 /** Common WhatsApp template languages (any Meta language code also works). */
 export const LANGUAGES: { code: string; label: string }[] = [
@@ -118,6 +182,19 @@ function checkPlaceholders(where: string, text: string, format: DraftFormat, pro
   if (/\}\}\s*\{\{/.test(text)) problems.push(`${where}: put some text between variables (WhatsApp rejects {{1}}{{2}})`);
 }
 
+function validateAuth(a: AuthSettings, p: string[]) {
+  if (a.codeExpirationMinutes !== null && (!Number.isInteger(a.codeExpirationMinutes) || a.codeExpirationMinutes < 1 || a.codeExpirationMinutes > 90)) {
+    p.push("Code expiry: 1 to 90 minutes");
+  }
+  if (a.otpType === "COPY_CODE" && a.buttonText.length > LIMITS.buttonText) p.push(`Button text: max ${LIMITS.buttonText} characters`);
+  if (a.otpType !== "COPY_CODE") {
+    if (a.autofillText.length > LIMITS.buttonText) p.push(`Autofill button text: max ${LIMITS.buttonText} characters`);
+    if (!/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(a.packageName.trim())) p.push("Android package name looks wrong (e.g. com.example.app)");
+    if (!/^[A-Za-z0-9+/]{11}$/.test(a.signatureHash.trim())) p.push("App signature hash: the 11-character hash of your Android app");
+  }
+  if (a.otpType === "ZERO_TAP" && !a.zeroTapTermsAccepted) p.push("Zero-tap: accept WhatsApp's zero-tap terms");
+}
+
 /** Everything that would make Meta reject the template, in plain language. Empty = ready. */
 export function validateDraft(draft: TemplateDraft, mode: "create" | "edit"): string[] {
   const p: string[] = [];
@@ -126,6 +203,18 @@ export function validateDraft(draft: TemplateDraft, mode: "create" | "edit"): st
     if (!draft.name) p.push("Name is required");
     else if (!/^[a-z0-9_]+$/.test(draft.name)) p.push("Name: lowercase letters, numbers and _ only");
     if (!/^[a-z]{2,3}(_[A-Z]{2})?$/.test(draft.language)) p.push("Language code looks wrong (e.g. en, en_US, hi)");
+  }
+
+  if (draft.ttl.enabled) {
+    const r = TTL_RANGES[draft.category];
+    if (!Number.isInteger(draft.ttl.seconds) || draft.ttl.seconds < r.min || draft.ttl.seconds > r.max) {
+      p.push(`Time-to-live for ${draft.category.toLowerCase()} templates: ${formatDuration(r.min)} to ${formatDuration(r.max)}`);
+    }
+  }
+
+  if (draft.category === "AUTHENTICATION") {
+    validateAuth(draft.auth, p);
+    return p;
   }
 
   const h = draft.header;
@@ -197,7 +286,36 @@ export function validateDraft(draft: TemplateDraft, mode: "create" | "edit"): st
 // Draft → Meta components (for create / edit requests)
 // ---------------------------------------------------------------------------
 
+function authComponents(a: AuthSettings): Record<string, unknown>[] {
+  const button: Record<string, unknown> = { type: "OTP", otp_type: a.otpType };
+  if (a.otpType === "COPY_CODE") {
+    if (a.buttonText.trim()) button.text = a.buttonText.trim();
+  } else {
+    if (a.autofillText.trim()) button.autofill_text = a.autofillText.trim();
+    button.supported_apps = [{ package_name: a.packageName.trim(), signature_hash: a.signatureHash.trim() }];
+    if (a.otpType === "ZERO_TAP") button.zero_tap_terms_accepted = true;
+  }
+  return [
+    { type: "BODY", add_security_recommendation: a.securityRecommendation },
+    ...(a.codeExpirationMinutes ? [{ type: "FOOTER", code_expiration_minutes: a.codeExpirationMinutes }] : []),
+    { type: "BUTTONS", buttons: [button] },
+  ];
+}
+
+/** The body of a create request (POST /{waba}/message_templates). */
+export function draftToCreatePayload(draft: TemplateDraft): Record<string, unknown> {
+  return {
+    name: draft.name,
+    language: draft.language,
+    category: draft.category,
+    ...(draft.category !== "AUTHENTICATION" && { parameter_format: draft.parameterFormat }),
+    ...(draft.ttl.enabled && { message_send_ttl_seconds: draft.ttl.seconds }),
+    components: draftToComponents(draft),
+  };
+}
+
 export function draftToComponents(draft: TemplateDraft): Record<string, unknown>[] {
+  if (draft.category === "AUTHENTICATION") return authComponents(draft.auth);
   const named = draft.parameterFormat === "NAMED";
   const components: Record<string, unknown>[] = [];
   const h = draft.header;
@@ -317,15 +435,48 @@ export function templateToDraft(raw: any): TemplateDraft {
     return [];
   });
 
+  const category = String(raw.category).toUpperCase();
+  const ttlSeconds = Number(raw.message_send_ttl_seconds);
+  const ttl = { enabled: Number.isFinite(ttlSeconds) && ttlSeconds > 0, seconds: ttlSeconds > 0 ? ttlSeconds : EMPTY_DRAFT.ttl.seconds };
+
+  if (category === "AUTHENTICATION") {
+    // WhatsApp returns the OTP button as a URL button: …/otp/code/?otp_type=COPY_CODE&…
+    const b: any = find("BUTTONS")?.buttons?.[0] ?? {};
+    const otpType = String(b.otp_type ?? /otp_type=([A-Z_]+)/i.exec(b.url ?? "")?.[1] ?? "COPY_CODE").toUpperCase() as OtpType;
+    const app = b.supported_apps?.[0] ?? {};
+    const footer = find("FOOTER");
+    const minutes = footer?.code_expiration_minutes ?? Number(/(\d+)\s*minutes?/.exec(footer?.text ?? "")?.[1]);
+    return {
+      ...EMPTY_DRAFT,
+      name: raw.name ?? "",
+      language: raw.language ?? "en",
+      category: "AUTHENTICATION",
+      ttl,
+      auth: {
+        ...DEFAULT_AUTH,
+        otpType: ["COPY_CODE", "ONE_TAP", "ZERO_TAP"].includes(otpType) ? otpType : "COPY_CODE",
+        securityRecommendation: bc?.add_security_recommendation ?? /do not share/i.test(bodyText),
+        codeExpirationMinutes: Number.isFinite(minutes) && minutes > 0 ? minutes : null,
+        buttonText: otpType === "COPY_CODE" ? (b.text ?? DEFAULT_AUTH.buttonText) : DEFAULT_AUTH.buttonText,
+        autofillText: b.autofill_text ?? DEFAULT_AUTH.autofillText,
+        packageName: app.package_name ?? b.package_name ?? "",
+        signatureHash: app.signature_hash ?? b.signature_hash ?? "",
+        zeroTapTermsAccepted: otpType === "ZERO_TAP",
+      },
+    };
+  }
+
   return {
+    ...EMPTY_DRAFT,
     name: raw.name ?? "",
     language: raw.language ?? "en",
-    category: String(raw.category).toUpperCase() === "UTILITY" ? "UTILITY" : "MARKETING",
+    category: category === "UTILITY" ? "UTILITY" : "MARKETING",
     parameterFormat: format,
     header,
     body: { text: bodyText, examples },
     footer: find("FOOTER")?.text ?? "",
     buttons,
+    ttl,
   };
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */

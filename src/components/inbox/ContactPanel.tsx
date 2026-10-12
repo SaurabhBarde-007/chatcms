@@ -2,6 +2,7 @@ import { CHANNEL_LABEL, contactName, fullTime } from "@/lib/format";
 import type { ConversationDetailDTO } from "@/lib/types";
 import { isWindowOpen } from "@/lib/whatsapp-window";
 import { ContactMarketing } from "./ContactMarketing";
+import { ContactPayments } from "./ContactPayments";
 
 /** Right-hand panel: who the customer is. */
 export function ContactPanel({ conversation }: { conversation: ConversationDetailDTO }) {
@@ -21,6 +22,7 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
         )}
       </dl>
       {conversation.channel === "WHATSAPP" && <ContactMarketing key={contact.id} contact={contact} />}
+      {conversation.channel === "WHATSAPP" && <ContactPayments contactId={contact.id} />}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import type { TemplateDraft } from "@/lib/marketing/template-builder";
+import { authMessage, type TemplateDraft } from "@/lib/marketing/template-builder";
 import { WhatsAppText } from "./WhatsAppText";
 
 const BUTTON_ICON = { QUICK_REPLY: "↩", URL: "↗", PHONE_NUMBER: "📞", COPY_CODE: "⧉" } as const;
@@ -9,7 +9,18 @@ function withSamples(text: string, samples: Record<string, string>) {
 }
 
 /** How the template will look in WhatsApp, with sample values filled in. */
-export function TemplatePreview({ draft, mediaUrl }: { draft: TemplateDraft; mediaUrl?: string | null }) {
+export function TemplatePreview({ draft: input, mediaUrl }: { draft: TemplateDraft; mediaUrl?: string | null }) {
+  // Authentication templates: WhatsApp writes the text; show it as the customer will see it.
+  const auth = input.category === "AUTHENTICATION" ? authMessage(input.auth) : null;
+  const draft: TemplateDraft = auth
+    ? {
+        ...input,
+        header: { type: "NONE" },
+        body: { text: auth.body, examples: {} },
+        footer: auth.footer,
+        buttons: [{ type: input.auth.otpType === "COPY_CODE" ? "COPY_CODE" : "URL", ...(input.auth.otpType === "COPY_CODE" ? { example: "" } : { text: auth.button, url: "", example: "" }) } as TemplateDraft["buttons"][number]],
+      }
+    : input;
   const h = draft.header;
   const headerSamples = h.type === "TEXT" ? Object.fromEntries((h.text.match(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/) ?? []).slice(1).map((n) => [n, h.example])) : {};
   const image = mediaUrl ?? (h.type !== "NONE" && h.type !== "TEXT" ? h.sampleUrl : undefined);
@@ -41,7 +52,7 @@ export function TemplatePreview({ draft, mediaUrl }: { draft: TemplateDraft; med
             {draft.buttons.map((b, i) => (
               <div key={i} className="flex items-center justify-center gap-1.5 border-b border-slate-100 py-2 text-[13px] text-sky-600 last:border-0">
                 <span aria-hidden>{BUTTON_ICON[b.type]}</span>
-                {b.type === "COPY_CODE" ? "Copy offer code" : b.text || <span className="text-slate-300">Button</span>}
+                {b.type === "COPY_CODE" ? (auth?.button ?? "Copy offer code") : b.text || <span className="text-slate-300">Button</span>}
               </div>
             ))}
           </div>

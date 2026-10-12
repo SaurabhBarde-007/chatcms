@@ -32,10 +32,29 @@ jobs:
           APP_URL: ${{ vars.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
-            echo "::error::Set the APP_URL variable and the CRON_SECRET secret (see the comments at the top of this file)."
+          if [ -z "$APP_URL" ]; then
+            echo "::error::The APP_URL variable isn't set. Add it under Settings → Secrets and variables → Actions → Variables, e.g. https://chatcms-one.vercel.app"
             exit 1
           fi
-          curl --fail-with-body --silent --show-error --max-time 30 \
-            -X POST "$APP_URL/api/cron/campaigns" \
-            -H "Authorization: Bearer $CRON_SECRET"
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::The CRON_SECRET secret isn't set. Add it under Settings → Secrets and variables → Actions → Secrets, with the same value as CRON_SECRET in Vercel."
+            exit 1
+          fi
+          # Pasted values often carry a trailing newline or slash.
+          CRON_SECRET="$(printf '%s' "$CRON_SECRET" | tr -d '[:space:]')"
+          echo "::add-mask::$CRON_SECRET"
+          url="${APP_URL%/}/api/cron/campaigns"
+
+          status=$(curl --silent --show-error --max-time 30 -o "$RUNNER_TEMP/response" -w "%{http_code}" \
+            -X POST "$url" -H "Authorization: Bearer $CRON_SECRET") \
+            || { echo "::error::Couldn't reach $url. Check the APP_URL variable."; exit 1; }
+          body="$(cat "$RUNNER_TEMP/response")"
+
+          case "$status" in
+            2??) echo "OK: $body" ;;
+            401) echo "::error::The app rejected CRON_SECRET (401). The GitHub secret must be exactly the value of CRON_SECRET in Vercel."; exit 1 ;;
+            503) echo "::error::CRON_SECRET isn't set in the app. Add it in Vercel → Settings → Environment Variables, then redeploy."; exit 1 ;;
+            3??) echo "::error::$url redirects ($status). Set APP_URL to the app's final https:// address."; exit 1 ;;
+            404) echo "::error::$url wasn't found (404). Check APP_URL, and that the latest code is deployed."; exit 1 ;;
+            *) echo "::error::The app answered $status: $body"; exit 1 ;;
+          esac

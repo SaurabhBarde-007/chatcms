@@ -17,13 +17,27 @@ body {
     @apply inline-flex items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md bg-[#0f3d3e] px-3 py-2 text-sm font-medium text-white hover:bg-[#145354] disabled:cursor-not-allowed disabled:opacity-50;
   }
   .chip {
     @apply rounded-full border border-slate-300 px-2.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-slate-100;
   }
   .chip-active {
-    @apply border-slate-900 bg-slate-900 text-white hover:bg-slate-800;
+    @apply border-[#0f3d3e] bg-[#0f3d3e] text-white hover:bg-[#145354];
+  }
+  /* Underlined tabs (templates, campaigns). */
+  .tab {
+    @apply -mb-px border-b-2 border-transparent px-3 py-2 text-sm whitespace-nowrap text-slate-500 hover:text-slate-800;
+  }
+  .tab-active {
+    @apply border-[#0f3d3e] font-medium text-[#0f3d3e];
+  }
+  /* A label above a form field, AiSensy-style: title + one-line help. */
+  .field-title {
+    @apply block text-sm font-medium text-slate-800;
+  }
+  .field-help {
+    @apply mt-0.5 mb-1.5 block text-xs text-slate-500;
   }
 }
 

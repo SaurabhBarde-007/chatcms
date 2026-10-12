@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  authMessage,
   draftToComponents,
+  draftToCreatePayload,
   EMPTY_DRAFT,
   nextPlaceholder,
   type TemplateDraft,
@@ -10,6 +12,7 @@ import {
 } from "../marketing/template-builder";
 
 const promo: TemplateDraft = {
+  ...EMPTY_DRAFT,
   name: "diwali_sale",
   language: "en",
   category: "MARKETING",
@@ -153,5 +156,88 @@ describe("helpers", () => {
     expect(nextPlaceholder({ ...promo })).toBe("{{3}}");
     expect(nextPlaceholder({ ...EMPTY_DRAFT })).toBe("{{1}}");
     expect(nextPlaceholder({ ...EMPTY_DRAFT, parameterFormat: "NAMED" }, "First Name")).toBe("{{first_name}}");
+  });
+});
+
+describe("authentication templates", () => {
+  const otp: TemplateDraft = {
+    ...EMPTY_DRAFT,
+    name: "login_code",
+    language: "en_US",
+    category: "AUTHENTICATION",
+    ttl: { enabled: true, seconds: 300 },
+    auth: { ...EMPTY_DRAFT.auth, otpType: "COPY_CODE", securityRecommendation: true, codeExpirationMinutes: 5, buttonText: "Copy code" },
+  };
+
+  it("builds the copy-code create payload with TTL", () => {
+    expect(draftToCreatePayload(otp)).toEqual({
+      name: "login_code",
+      language: "en_US",
+      category: "AUTHENTICATION",
+      message_send_ttl_seconds: 300,
+      components: [
+        { type: "BODY", add_security_recommendation: true },
+        { type: "FOOTER", code_expiration_minutes: 5 },
+        { type: "BUTTONS", buttons: [{ type: "OTP", otp_type: "COPY_CODE", text: "Copy code" }] },
+      ],
+    });
+    expect(validateDraft(otp, "create")).toEqual([]);
+  });
+
+  it("builds one-tap with the Android app", () => {
+    const oneTap = { ...otp, auth: { ...otp.auth, otpType: "ONE_TAP" as const, codeExpirationMinutes: null, autofillText: "Autofill", packageName: "com.example.app", signatureHash: "K8a/AINcGX7" } };
+    expect(draftToComponents(oneTap)).toEqual([
+      { type: "BODY", add_security_recommendation: true },
+      { type: "BUTTONS", buttons: [{ type: "OTP", otp_type: "ONE_TAP", autofill_text: "Autofill", supported_apps: [{ package_name: "com.example.app", signature_hash: "K8a/AINcGX7" }] }] },
+    ]);
+  });
+
+  it("validates expiry, app details, zero-tap terms and TTL range", () => {
+    const bad = { ...otp, ttl: { enabled: true, seconds: 3600 }, auth: { ...otp.auth, otpType: "ZERO_TAP" as const, codeExpirationMinutes: 120, packageName: "app", signatureHash: "short" } };
+    expect(validateDraft(bad, "create")).toEqual([
+      "Time-to-live for authentication templates: 30 sec to 15 min",
+      "Code expiry: 1 to 90 minutes",
+      "Android package name looks wrong (e.g. com.example.app)",
+      "App signature hash: the 11-character hash of your Android app",
+      "Zero-tap: accept WhatsApp's zero-tap terms",
+    ]);
+  });
+
+  it("reads an authentication template as WhatsApp returns it", () => {
+    const draft = templateToDraft({
+      name: "login_code",
+      language: "en_US",
+      category: "AUTHENTICATION",
+      message_send_ttl_seconds: 300,
+      components: [
+        { type: "BODY", text: "*{{1}}* is your verification code. For your security, do not share this code." },
+        { type: "FOOTER", text: "This code expires in 5 minutes." },
+        { type: "BUTTONS", buttons: [{ type: "URL", text: "Copy code", url: "https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code_expiration_minutes=5&code=otp{{1}}" }] },
+      ],
+    });
+    expect(draft).toMatchObject({ category: "AUTHENTICATION", ttl: { enabled: true, seconds: 300 }, auth: { otpType: "COPY_CODE", securityRecommendation: true, codeExpirationMinutes: 5, buttonText: "Copy code" } });
+  });
+
+  it("previews the text WhatsApp writes", () => {
+    expect(authMessage(otp.auth, "482913")).toEqual({
+      body: "*482913* is your verification code. For your security, do not share this code.",
+      footer: "This code expires in 5 minutes.",
+      button: "Copy code",
+    });
+  });
+
+  it("checks TTL ranges per category", () => {
+    expect(validateDraft({ ...promo, ttl: { enabled: true, seconds: 3600 } }, "create")).toContain("Time-to-live for marketing templates: 12 hours to 30 days");
+    expect(validateDraft({ ...promo, ttl: { enabled: true, seconds: 86_400 } }, "create")).toEqual([]);
+  });
+});
+
+describe("starter templates", () => {
+  it("are all valid except for media samples you add yourself", async () => {
+    const { TEMPLATE_STARTERS } = await import("../marketing/template-starters");
+    for (const s of TEMPLATE_STARTERS) {
+      const problems = validateDraft(s.draft, "create").filter((p) => !p.startsWith("Header: upload a sample"));
+      expect(problems, s.key).toEqual([]);
+    }
   });
 });

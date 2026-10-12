@@ -290,12 +290,12 @@ function OptInApiHelp() {
     <Card title="Collect opt-ins from your website" className="mt-6">
       <p className="text-sm text-slate-600">
         When someone ticks &ldquo;Send me offers on WhatsApp&rdquo; on your site, have your backend call this endpoint. They&apos;re
-        added (or updated) and opted in. Set <code className="rounded bg-slate-100 px-1">OPTIN_API_KEY</code> in your environment
+        added (or updated) and opted in. Set <code className="rounded bg-slate-100 px-1">API_KEY</code> in your environment
         first. Never call it from the browser, because that would expose the key.
       </p>
       <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
         {`curl -X POST ${origin}/api/contacts/opt-in \\
-  -H "Authorization: Bearer $OPTIN_API_KEY" \\
+  -H "Authorization: Bearer $API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"phone":"+919812345678","name":"Asha","tags":["website"],"attributes":{"city":"Pune"}}'`}
       </pre>

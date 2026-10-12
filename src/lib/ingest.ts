@@ -1,6 +1,7 @@
 import { Prisma, type Channel, type ConversationStatus } from "@/generated/prisma/client";
 import type { InboundMessage } from "./channels/types";
 import { db } from "./db";
+import { queueAutoReply } from "./marketing/api-campaigns";
 import { onWhatsAppInbound } from "./marketing/inbound";
 import { publish } from "./realtime/publish";
 
@@ -16,12 +17,14 @@ const DEFAULT_STATUS: Record<Channel, ConversationStatus> = {
  * update the conversation's summary fields, then push it to open dashboards.
  * Safe to call twice with the same externalId (webhooks get resent).
  */
-export async function saveInboundMessage(input: InboundMessage): Promise<{ duplicate: boolean }> {
+export async function saveInboundMessage(
+  input: InboundMessage,
+): Promise<{ duplicate: boolean; /** API-campaign auto-replies to send (see sendApiRecipient). */ autoReplies: string[] }> {
   const { channel, conversationExternalId, contact, message } = input;
 
   if (message.externalId) {
     const existing = await db.message.findUnique({ where: { externalId: message.externalId } });
-    if (existing) return { duplicate: true };
+    if (existing) return { duplicate: true, autoReplies: [] };
   }
 
   const conversation = await findOrCreateConversation(channel, conversationExternalId, contact);
@@ -79,12 +82,13 @@ export async function saveInboundMessage(input: InboundMessage): Promise<{ dupli
     });
   } catch (err) {
     // Two identical webhooks raced each other: the unique externalId caught it.
-    if (isUniqueViolation(err)) return { duplicate: true };
+    if (isUniqueViolation(err)) return { duplicate: true, autoReplies: [] };
     throw err;
   }
 
   await publish({ kind: "message", id: saved.id });
 
+  let autoReplies: string[] = [];
   if (channel === "WHATSAPP" && isCustomer) {
     await onWhatsAppInbound({
       contactId: conversation.contactId,
@@ -93,9 +97,13 @@ export async function saveInboundMessage(input: InboundMessage): Promise<{ dupli
       replyToExternalId: message.replyToExternalId,
       at: createdAt,
     }).catch((err) => console.error("[marketing] inbound handling failed:", err));
+    autoReplies = await queueAutoReply({ contactId: conversation.contactId, text: message.body, at: createdAt }).catch((err) => {
+      console.error("[marketing] auto-reply failed:", err);
+      return [];
+    });
   }
 
-  return { duplicate: false };
+  return { duplicate: false, autoReplies };
 }
 
 async function findOrCreateConversation(

@@ -6,14 +6,14 @@ Call it **from your backend**, never from the browser: the key would be visible 
 
 ## Setup
 
-Set `OPTIN_API_KEY` in the app's environment (Vercel → Settings → Environment Variables) to a long random value, e.g. the output of `openssl rand -hex 32`, then redeploy.
+Set `API_KEY` in the app's environment (Vercel → Settings → Environment Variables) to a long random value, e.g. the output of `openssl rand -hex 32`, then redeploy. `OPTIN_API_KEY` from older setups still works.
 
 ## Request
 
 `POST /api/contacts/opt-in`
 
 ```
-Authorization: Bearer <OPTIN_API_KEY>
+Authorization: Bearer <API_KEY>
 Content-Type: application/json
 ```
 
@@ -51,7 +51,7 @@ An explicit opt-in through this API re-subscribes someone who had opted out befo
 ```js
 await fetch("https://chatcms-one.vercel.app/api/contacts/opt-in", {
   method: "POST",
-  headers: { Authorization: `Bearer ${process.env.OPTIN_API_KEY}`, "Content-Type": "application/json" },
+  headers: { Authorization: `Bearer ${process.env.API_KEY}`, "Content-Type": "application/json" },
   body: JSON.stringify({ phone: form.phone, name: form.name, tags: ["website"] }),
 });
 ```

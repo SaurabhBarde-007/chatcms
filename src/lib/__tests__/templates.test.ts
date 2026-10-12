@@ -157,3 +157,33 @@ describe("missingVariables / renderTemplateText", () => {
     );
   });
 });
+
+describe("authentication templates (sending)", () => {
+  const auth = parseTemplate({
+    name: "login_code",
+    language: "en_US",
+    category: "AUTHENTICATION",
+    components: [
+      { type: "BODY", text: "*{{1}}* is your verification code." },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Copy code", url: "https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=otp{{1}}" }] },
+    ],
+  });
+  const code = (value: string): TemplateVariables => ({ header: {}, body: { "1": { from: "text", value } }, buttons: {} });
+
+  it("is supported and needs only the code", () => {
+    expect(auth.unsupported).toBeNull();
+    expect(auth.buttons[0].type).toBe("OTP");
+    expect(missingVariables(auth, code("482913"))).toEqual([]);
+  });
+
+  it("sends the code in the body and the button", () => {
+    expect(buildTemplateComponents(auth, code("482913"), asha)).toEqual([
+      { type: "body", parameters: [{ type: "text", text: "482913" }] },
+      { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: "482913" }] },
+    ]);
+  });
+
+  it("rejects codes longer than 15 characters", () => {
+    expect(() => buildTemplateComponents(auth, code("1234567890123456"), asha)).toThrow(/at most 15/);
+  });
+});

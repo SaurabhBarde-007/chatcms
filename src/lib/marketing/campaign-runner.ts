@@ -3,13 +3,18 @@ import { sendTemplateMessage, WhatsAppApiError } from "../channels/whatsapp";
 import { db } from "../db";
 import { env } from "../env";
 import { REACHABLE, segmentRulesSchema, segmentWhere } from "./segments";
+import { createPaymentRequest } from "../payments/payments";
+import { isRazorpayConfigured } from "../payments/razorpay";
 import {
   buildTemplateComponents,
+  PAYMENT_LINK_PREFIX,
+  paymentSources,
   renderTemplateText,
   type Template,
   type TemplateContact,
   type TemplateVariables,
   TemplateValueError,
+  type ValueSource,
 } from "./templates";
 
 // Sends campaigns. Called by /api/cron/campaigns (GitHub Actions every 30 min, and a self-call
@@ -75,6 +80,7 @@ export function classifySendError(err: unknown): { kind: SendErrorKind; code?: n
  */
 export async function runCampaigns(deadline: number): Promise<{ more: boolean }> {
   await recoverInterruptedSends();
+  await sendStaleApiRecipients();
 
   const due = await db.campaign.findMany({
     where: { status: "SCHEDULED", scheduledAt: { lte: new Date() } },
@@ -182,7 +188,7 @@ async function sendCampaign(campaign: Campaign, deadline: number): Promise<boole
     const contacts = await db.contact.findMany({ where: { id: { in: batch.map((r) => r.contactId) } } });
     const byId = new Map(contacts.map((c) => [c.id, c]));
     const results = await mapWithConcurrency(batch, CONCURRENCY, (r) =>
-      sendToRecipient(campaign, template, variables, r.id, byId.get(r.contactId)),
+      sendToRecipient(campaign, template, variables, r.id, byId.get(r.contactId), null),
     );
 
     const fatal = results.find((r) => r.kind === "fatal");
@@ -208,18 +214,92 @@ async function sendCampaign(campaign: Campaign, deadline: number): Promise<boole
   return false;
 }
 
-type Outcome = { kind: "sent" | "skipped" | "retry" | "failed" | "fatal"; code?: number; message?: string };
+export type Outcome = { kind: "sent" | "skipped" | "retry" | "failed" | "fatal"; code?: number; message?: string };
+
+/**
+ * Who may get this message. Broadcasts: only opted-in contacts. API campaigns (replies and
+ * one-off sends): anyone, except that marketing templates still respect opt-outs.
+ */
+export function consentProblem(
+  campaign: Pick<Campaign, "type">,
+  category: string,
+  contact: Pick<Contact, "waId" | "optInStatus">,
+): string | null {
+  if (!contact.waId) return "No WhatsApp number";
+  if (campaign.type === "BROADCAST") return contact.optInStatus === "OPTED_IN" ? null : "Not opted in (or opted out before the campaign reached them)";
+  if (category === "MARKETING" && contact.optInStatus === "OPTED_OUT") return "Opted out of marketing messages";
+  return null;
+}
+
+/** Per-send values from an API call: { "1": "Asha", "code": "482913", "url": "abc", "mediaUrl": "https://…" }. */
+export function applyParams(template: Template, vars: TemplateVariables, params: Record<string, string> | null): TemplateVariables {
+  if (!params) return vars;
+  const text = (value: string): ValueSource => ({ from: "text", value });
+  const next: TemplateVariables = { ...vars, header: { ...vars.header }, body: { ...vars.body }, buttons: { ...vars.buttons } };
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value !== "string" && typeof value !== "number") continue;
+    const v = String(value);
+    if (key === "mediaUrl") next.headerMediaUrl = v;
+    else if (key === "code") next.body["1"] = text(v);
+    else if (key === "header" && template.header?.params[0]) next.header[template.header.params[0]] = text(v);
+    else if (key.startsWith("header.")) next.header[key.slice(7)] = text(v);
+    else if (key === "url" || /^button\.\d+$/.test(key)) {
+      const button = key === "url" ? template.buttons.find((b) => b.params.length) : template.buttons.find((b) => b.index === Number(key.slice(7)));
+      if (button?.params[0]) next.buttons[String(button.index)] = { ...next.buttons[String(button.index)], [button.params[0]]: text(v) };
+    } else if (template.body.params.includes(key)) next.body[key] = text(v);
+  }
+  return next;
+}
+
+/** Create this recipient's payment link (once) and put it in place of the "payment" value. */
+async function withPaymentLink(
+  campaign: Campaign,
+  template: Template,
+  vars: TemplateVariables,
+  recipientId: string,
+  contact: Contact,
+): Promise<TemplateVariables> {
+  const [p] = paymentSources(template, vars);
+  if (!p) return vars;
+
+  const existing = await db.paymentRequest.findUnique({ where: { campaignRecipientId: recipientId } });
+  let link = existing?.shortUrl ?? null;
+  if (!link) {
+    const attr = p.source.amountField ? Number((contact.attributes as Record<string, unknown>)?.[p.source.amountField]) : NaN;
+    const rupees = Number.isFinite(attr) && attr > 0 ? attr : p.source.amount;
+    if (!(rupees > 0)) throw new TemplateValueError(`No payment amount${p.source.amountField ? ` in "${p.source.amountField}"` : ""}`);
+    const payment = await createPaymentRequest({
+      contactId: contact.id,
+      amount: Math.round(rupees * 100),
+      description: p.source.description,
+      expiresInHours: p.source.expiresInHours,
+      campaignId: campaign.id,
+      campaignRecipientId: recipientId,
+      sentVia: "campaign",
+    });
+    link = payment.shortUrl;
+  }
+  if (!link) throw new TemplateValueError("Couldn't create the payment link");
+
+  const value = p.group === "button" ? link.replace(PAYMENT_LINK_PREFIX, "") : link;
+  const source: ValueSource = { from: "text", value };
+  if (p.group === "header") return { ...vars, header: { ...vars.header, [p.key]: source } };
+  if (p.group === "body") return { ...vars, body: { ...vars.body, [p.key]: source } };
+  const key = String(p.buttonIndex);
+  return { ...vars, buttons: { ...vars.buttons, [key]: { ...vars.buttons[key], [p.key]: source } } };
+}
 
 async function sendToRecipient(
   campaign: Campaign,
   template: Template,
-  variables: TemplateVariables,
+  campaignVariables: TemplateVariables,
   recipientId: string,
   contact: Contact | undefined,
+  params: Record<string, string> | null,
 ): Promise<Outcome> {
-  if (!contact?.waId || contact.optInStatus !== "OPTED_IN") {
-    const reason = !contact?.waId ? "No WhatsApp number" : "Opted out before the campaign reached them";
-    await db.campaignRecipient.update({ where: { id: recipientId }, data: { status: "SKIPPED", error: reason } });
+  const problem = contact ? consentProblem(campaign, template.category, contact) : "Contact not found";
+  if (problem || !contact?.waId) {
+    await db.campaignRecipient.update({ where: { id: recipientId }, data: { status: "SKIPPED", error: problem ?? "No WhatsApp number" } });
     return { kind: "skipped" };
   }
 
@@ -231,10 +311,16 @@ async function sendToRecipient(
   };
 
   let components: Record<string, unknown>[];
+  let variables: TemplateVariables;
   try {
+    variables = applyParams(template, campaignVariables, params);
+    if (paymentSources(template, variables).length && !isRazorpayConfigured()) {
+      return await failRecipient(recipientId, "fatal", "Razorpay isn't set up (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET), so payment links can't be created");
+    }
+    variables = await withPaymentLink(campaign, template, variables, recipientId, contact);
     components = buildTemplateComponents(template, variables, templateContact);
   } catch (err) {
-    const message = err instanceof TemplateValueError ? err.message : String(err);
+    const message = err instanceof Error ? err.message : String(err);
     await db.campaignRecipient.update({
       where: { id: recipientId },
       data: { status: "FAILED", failedAt: new Date(), error: message },
@@ -286,6 +372,55 @@ async function sendToRecipient(
     ]);
     return { kind: error.kind === "fatal" ? "fatal" : "failed", code: error.code, message: error.message };
   }
+}
+
+async function failRecipient(recipientId: string, kind: "failed" | "fatal", message: string): Promise<Outcome> {
+  await db.campaignRecipient.update({ where: { id: recipientId }, data: { status: "FAILED", failedAt: new Date(), error: message } });
+  return { kind, message };
+}
+
+/**
+ * Send one API-campaign message now (auto-reply or API call). Returns what happened.
+ * Errors that would affect every message are recorded on the campaign, which stays live.
+ */
+export async function sendApiRecipient(recipientId: string): Promise<Outcome> {
+  const { count } = await db.campaignRecipient.updateMany({
+    where: { id: recipientId, status: "PENDING" },
+    data: { status: "SENDING", claimedAt: new Date() },
+  });
+  if (!count) return { kind: "skipped", message: "Already handled" };
+
+  const r = await db.campaignRecipient.findUnique({ where: { id: recipientId }, include: { campaign: true, contact: true } });
+  if (!r) return { kind: "skipped" };
+  if (r.campaign.status !== "LIVE") {
+    await db.campaignRecipient.update({ where: { id: r.id }, data: { status: "SKIPPED", error: "Campaign is paused" } });
+    return { kind: "skipped", message: "Campaign is paused" };
+  }
+
+  const outcome = await sendToRecipient(
+    r.campaign,
+    r.campaign.template as unknown as Template,
+    r.campaign.variables as unknown as TemplateVariables,
+    r.id,
+    r.contact,
+    (r.params as Record<string, string> | null) ?? null,
+  );
+  if (outcome.kind === "retry") {
+    // Rate limited: it's back in PENDING; the next cron run (or a retry) will send it.
+  } else if (outcome.kind === "fatal") {
+    await db.campaign.update({ where: { id: r.campaign.id }, data: { lastError: outcome.message ?? "WhatsApp rejected the message" } });
+  }
+  return outcome;
+}
+
+/** API-campaign messages whose immediate send never ran (e.g. the server stopped). */
+async function sendStaleApiRecipients() {
+  const stale = await db.campaignRecipient.findMany({
+    where: { status: "PENDING", campaign: { type: "API" }, createdAt: { lt: new Date(Date.now() - 60_000) } },
+    select: { id: true },
+    take: 200,
+  });
+  for (const r of stale) await sendApiRecipient(r.id).catch((err) => console.error("[campaigns] api send failed:", err));
 }
 
 /** The contact's WhatsApp conversation, created if needed (stays out of the inbox list until they reply). */

@@ -1,8 +1,9 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 import { parseWhatsAppWebhook } from "@/lib/channels/whatsapp";
 import { applyStatusUpdate } from "@/lib/conversations";
 import { env } from "@/lib/env";
 import { saveInboundMessage } from "@/lib/ingest";
+import { sendApiRecipient } from "@/lib/marketing/campaign-runner";
 import { isValidSignature } from "@/lib/signatures";
 
 // Webhook URL to configure in Meta: https://<your-domain>/api/webhooks/whatsapp
@@ -39,11 +40,25 @@ export async function POST(req: NextRequest) {
   console.log(`[whatsapp] webhook received: ${messages.length} message(s), ${statuses.length} status update(s)`);
 
   // Errors are logged, not returned: a non-200 makes Meta resend the whole batch.
+  const autoReplies: string[] = [];
   for (const message of messages) {
-    await saveInboundMessage(message).catch((err) => console.error("[whatsapp] save failed:", err));
+    const saved = await saveInboundMessage(message).catch((err) => {
+      console.error("[whatsapp] save failed:", err);
+      return null;
+    });
+    if (saved) autoReplies.push(...saved.autoReplies);
   }
   for (const status of statuses) {
     await applyStatusUpdate(status).catch((err) => console.error("[whatsapp] status failed:", err));
+  }
+
+  // API-campaign auto-replies go out right after we've answered Meta.
+  if (autoReplies.length) {
+    after(async () => {
+      for (const id of autoReplies) {
+        await sendApiRecipient(id).catch((err) => console.error("[whatsapp] auto-reply failed:", err));
+      }
+    });
   }
 
   return NextResponse.json({ ok: true });

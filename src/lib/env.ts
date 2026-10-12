@@ -51,12 +51,32 @@ export const env = {
 
   /** Shared secret for /api/cron/campaigns (GitHub Actions sends it). Optional locally. */
   get cronSecret() {
-    return process.env.CRON_SECRET ?? "";
+    return (process.env.CRON_SECRET ?? "").trim();
   },
 
-  /** Key your website/forms use to call the opt-in API. */
+  /** Key your systems use to call this app's API (opt-in API, API campaigns). */
+  get apiKey() {
+    return process.env.API_KEY || process.env.OPTIN_API_KEY || "";
+  },
+  /** @deprecated use apiKey (OPTIN_API_KEY still works). */
   get optInApiKey() {
-    return process.env.OPTIN_API_KEY ?? "";
+    return env.apiKey;
+  },
+
+  razorpay: {
+    get keyId() {
+      return process.env.RAZORPAY_KEY_ID ?? "";
+    },
+    get keySecret() {
+      return process.env.RAZORPAY_KEY_SECRET ?? "";
+    },
+    get webhookSecret() {
+      return process.env.RAZORPAY_WEBHOOK_SECRET ?? "";
+    },
+    /** Only changed for testing against a fake Razorpay. */
+    get apiBase() {
+      return process.env.RAZORPAY_API_BASE || "https://api.razorpay.com/v1";
+    },
   },
 
   bot: {

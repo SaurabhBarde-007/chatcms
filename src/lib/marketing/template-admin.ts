@@ -1,8 +1,16 @@
 import { env } from "../env";
+import { submittedDates } from "./template-drafts";
 import { db } from "../db";
 import { UserError } from "../errors";
 import { graph, WhatsAppApiError } from "../channels/whatsapp";
-import { draftToComponents, isEditableStatus, type TemplateDraft, templateToDraft, validateDraft } from "./template-builder";
+import {
+  draftToComponents,
+  draftToCreatePayload,
+  isEditableStatus,
+  type TemplateDraft,
+  templateToDraft,
+  validateDraft,
+} from "./template-builder";
 
 // Managing templates in your WhatsApp Business Account: list (every status), create, edit,
 // delete, and uploading sample media for headers. Meta is the source of truth, so templates
@@ -10,9 +18,11 @@ import { draftToComponents, isEditableStatus, type TemplateDraft, templateToDraf
 
 export class TemplateError extends UserError {}
 
-const FIELDS = "id,name,language,status,category,parameter_format,components,rejected_reason,quality_score";
+const FIELDS = "id,name,language,status,category,parameter_format,components,rejected_reason,quality_score,message_send_ttl_seconds";
 
 export type TemplateRowDTO = {
+  /** When it was submitted from this app (WhatsApp doesn't report creation dates). */
+  createdAt?: string | null;
   id: string;
   name: string;
   language: string;
@@ -41,6 +51,11 @@ function toRow(t: any): TemplateRowDTO {
 
 /** Every template in the account, any status, newest first (as Meta returns them). */
 export async function listAllTemplates(): Promise<TemplateRowDTO[]> {
+  const [rows, dates] = await Promise.all([fetchAllTemplates(), submittedDates()]);
+  return rows.map((r) => ({ ...r, createdAt: dates.get(r.id) ?? null }));
+}
+
+async function fetchAllTemplates(): Promise<TemplateRowDTO[]> {
   const rows: TemplateRowDTO[] = [];
   let after: string | undefined;
   do {
@@ -65,21 +80,13 @@ function assertValid(draft: TemplateDraft, mode: "create" | "edit") {
 }
 
 /** Submit a new template for WhatsApp's review. */
-export async function createTemplate(draft: TemplateDraft): Promise<{ id: string; status: string; category: string }> {
-  assertValid(draft, "create");
+export async function createTemplate(input: TemplateDraft): Promise<{ id: string; status: string; category: string }> {
+  assertValid(input, "create");
+  const draft = await withUploadedHeader(input);
   try {
     const res = await graph<{ id: string; status: string; category: string }>(
       `${env.whatsapp.businessAccountId}/message_templates`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          name: draft.name,
-          language: draft.language,
-          category: draft.category,
-          parameter_format: draft.parameterFormat,
-          components: draftToComponents(draft),
-        }),
-      },
+      { method: "POST", body: JSON.stringify(draftToCreatePayload(draft)) },
     );
     return res;
   } catch (err) {
@@ -98,11 +105,14 @@ export async function updateTemplate(id: string, draft: TemplateDraft): Promise<
     const state = current.status === "PENDING" ? "in review" : current.status.toLowerCase().replace(/_/g, " ");
     throw new TemplateError(`A template that is ${state} can't be edited. Only approved, rejected or paused ones can.`);
   }
-  const next: TemplateDraft = { ...draft, name: current.name, language: current.language, parameterFormat: current.draft.parameterFormat };
-  if (next.header.type !== "NONE" && next.header.type !== "TEXT" && !next.header.handle) {
-    if (!next.header.sampleUrl) throw new TemplateError("Upload a sample for the header");
-    next.header = { ...next.header, handle: (await uploadSampleFromUrl(next.header.sampleUrl)).handle };
-  }
+  // Name, language, variable style and time-to-live are fixed once a template exists.
+  const next = await withUploadedHeader({
+    ...draft,
+    name: current.name,
+    language: current.language,
+    parameterFormat: current.draft.parameterFormat,
+    ttl: current.draft.ttl,
+  });
   assertValid(next, "edit");
 
   try {
@@ -116,6 +126,17 @@ export async function updateTemplate(id: string, draft: TemplateDraft): Promise<
   } catch (err) {
     throw friendlier(err, next);
   }
+}
+
+/**
+ * Media headers need an upload handle. When the draft only has an existing sample (editing, or a
+ * duplicated template), that sample is uploaded again for you.
+ */
+async function withUploadedHeader(draft: TemplateDraft): Promise<TemplateDraft> {
+  const h = draft.header;
+  if (draft.category === "AUTHENTICATION" || h.type === "NONE" || h.type === "TEXT" || h.handle) return draft;
+  if (!h.sampleUrl) throw new TemplateError("Upload a sample for the header");
+  return { ...draft, header: { ...h, handle: (await uploadSampleFromUrl(h.sampleUrl)).handle } };
 }
 
 /** Delete one template (this language only). */
