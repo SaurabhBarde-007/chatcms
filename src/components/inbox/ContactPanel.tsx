@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { CHANNEL_LABEL, classLabel, contactName, fullTime } from "@/lib/format";
+import { CHANNEL_LABEL, classLabel, contactName, fieldLabel, fullTime } from "@/lib/format";
 import type { ConversationDetailDTO } from "@/lib/types";
 import { isWindowOpen } from "@/lib/whatsapp-window";
-import { ContactDetailsDialog } from "../contacts/ContactDetailsDialog";
+import { BUILTIN_ATTRIBUTES } from "@/lib/marketing/templates";
+import { ContactDialog } from "../contacts/ContactDialog";
 import { ContactMarketing } from "./ContactMarketing";
 import { ContactPayments } from "./ContactPayments";
 
@@ -25,13 +26,18 @@ export function ContactPanel({ conversation }: { conversation: ConversationDetai
       </div>
       {editing && (
         // Saving updates every open inbox through the live stream.
-        <ContactDetailsDialog contactId={contact.id} contact={contact} onClose={() => setEditing(false)} />
+        <ContactDialog mode="edit" contact={contact} onClose={() => setEditing(false)} />
       )}
       <dl className="mt-3 space-y-1.5 text-slate-600">
         {contact.phone && <Row label="Phone" value={contact.phone} />}
         {contact.email && <Row label="Email" value={contact.email} />}
         {school && <Row label="School" value={school} />}
         {klass && <Row label="Class" value={klass} />}
+        {Object.entries(contact.attributes)
+          .filter(([key, value]) => !BUILTIN_ATTRIBUTES.includes(key) && value !== null && value !== "")
+          .map(([key, value]) => (
+            <Row key={key} label={fieldLabel(key)} value={String(value)} />
+          ))}
         <Row label="Channel" value={CHANNEL_LABEL[conversation.channel]} />
         <Row label="Channel ID" value={conversation.externalId} />
         {conversation.lastInboundAt && <Row label="Last message" value={fullTime(conversation.lastInboundAt)} />}

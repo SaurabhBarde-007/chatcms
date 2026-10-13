@@ -1,9 +1,9 @@
-import type { OptInStatus, Prisma } from "@/generated/prisma/client";
+import { type OptInStatus, Prisma } from "@/generated/prisma/client";
 import { db } from "../db";
 import { UserError } from "../errors";
 import { publish } from "../realtime/publish";
 import { setConsent } from "./consent";
-import type { ImportProblem, ImportRow } from "./csv";
+import { type ImportProblem, type ImportRow, normalizeHeader } from "./csv";
 import { normalizeWaId, waIdToPhone } from "./phone";
 
 // Contacts as a marketing audience: list/filter, edit tags and consent, import, opt-in API.
@@ -73,26 +73,101 @@ export async function listContacts(f: ContactFilters) {
 
   const page = rows.slice(0, PAGE_SIZE);
   return {
-    contacts: page.map(
-      (c): ContactRowDTO => ({
-        id: c.id,
-        name: c.name,
-        phone: c.phone ?? (c.waId ? waIdToPhone(c.waId) : null),
-        email: c.email,
-        waId: c.waId,
-        tags: c.tags,
-        attributes: (c.attributes ?? {}) as Record<string, unknown>,
-        optInStatus: c.optInStatus,
-        optInSource: c.optInSource,
-        optInAt: c.optInAt?.toISOString() ?? null,
-        optOutAt: c.optOutAt?.toISOString() ?? null,
-        lastActiveAt: c.conversations[0]?.lastInboundAt?.toISOString() ?? null,
-        createdAt: c.createdAt.toISOString(),
-      }),
-    ),
+    contacts: page.map((c) => toContactRow(c, c.conversations[0]?.lastInboundAt ?? null)),
     total,
     nextCursor: rows.length > PAGE_SIZE ? page[page.length - 1].id : null,
   };
+}
+
+function toContactRow(c: Prisma.ContactGetPayload<object>, lastActiveAt: Date | null): ContactRowDTO {
+  return {
+    id: c.id,
+    name: c.name,
+    phone: c.phone ?? (c.waId ? waIdToPhone(c.waId) : null),
+    email: c.email,
+    waId: c.waId,
+    tags: c.tags,
+    attributes: (c.attributes ?? {}) as Record<string, unknown>,
+    optInStatus: c.optInStatus,
+    optInSource: c.optInSource,
+    optInAt: c.optInAt?.toISOString() ?? null,
+    optOutAt: c.optOutAt?.toISOString() ?? null,
+    lastActiveAt: lastActiveAt?.toISOString() ?? null,
+    createdAt: c.createdAt.toISOString(),
+  };
+}
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Trimmed email, or null; throws if it can't be an address. */
+function cleanEmail(email: string | null | undefined): string | null {
+  const value = email?.trim();
+  if (!value) return null;
+  if (!EMAIL.test(value)) throw new ContactError(`"${value}" doesn't look like an email address`);
+  return value;
+}
+
+/** Custom field names as stored: "Parent Name" → "parent_name". Empty values are dropped. */
+function cleanAttributes(attributes: Record<string, string> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(attributes ?? {})) {
+    const k = normalizeHeader(key);
+    if (k && value?.trim()) out[k] = value.trim();
+  }
+  return out;
+}
+
+const cleanTags = (tags: string[] | undefined) => [...new Set((tags ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean))];
+
+export type NewContact = {
+  phone: string;
+  /** Added to numbers typed without "+", e.g. "91". */
+  defaultCountryCode?: string;
+  name?: string;
+  email?: string;
+  tags?: string[];
+  /** Custom fields, incl. school and class. */
+  attributes?: Record<string, string>;
+  /** They agreed to receive marketing messages. */
+  optedIn?: boolean;
+};
+
+/** Add one contact by hand. Fails if the number is already a contact. */
+export async function createContact(input: NewContact): Promise<ContactRowDTO> {
+  const waId = normalizeWaId(input.phone, input.defaultCountryCode);
+  if (!waId) throw new ContactError(`"${input.phone}" isn't a valid phone number. Include the country code, e.g. +91 98123 45678`);
+  const email = cleanEmail(input.email);
+
+  const duplicate = async () => {
+    const existing = await db.contact.findUnique({ where: { waId } });
+    return existing
+      ? new ContactError(`${waIdToPhone(waId)} is already in your contacts${existing.name ? ` as ${existing.name}` : ""}`)
+      : null;
+  };
+  const known = await duplicate();
+  if (known) throw known;
+
+  try {
+    const id = await db.$transaction(async (tx) => {
+      const contact = await tx.contact.create({
+        data: {
+          waId,
+          phone: waIdToPhone(waId),
+          name: input.name?.trim() || null,
+          email,
+          tags: cleanTags(input.tags),
+          attributes: cleanAttributes(input.attributes),
+        },
+      });
+      if (input.optedIn) await setConsent(contact.id, "OPTED_IN", "manual", tx);
+      return contact.id;
+    });
+    return toContactRow(await db.contact.findUniqueOrThrow({ where: { id } }), null);
+  } catch (err) {
+    // Someone else added the same number at the same moment.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") throw (await duplicate()) ?? err;
+    throw err;
+  }
 }
 
 /** Every tag in use, with how many contacts have it. */
@@ -133,12 +208,15 @@ export async function updateContact(
   const contact = await db.contact.findUnique({ where: { id }, include: { conversations: { select: { id: true } } } });
   if (!contact) throw new ContactError("Contact not found");
 
+  const email = input.email !== undefined ? cleanEmail(input.email) : undefined;
   let attributes: Record<string, unknown> | undefined;
   if (input.attributes) {
     attributes = { ...(contact.attributes as Record<string, unknown>) };
     for (const [key, value] of Object.entries(input.attributes)) {
-      if (value?.trim()) attributes[key] = value.trim();
-      else delete attributes[key];
+      const k = normalizeHeader(key);
+      if (!k) continue;
+      if (value?.trim()) attributes[k] = value.trim();
+      else delete attributes[k];
     }
   }
 
@@ -147,8 +225,8 @@ export async function updateContact(
       where: { id },
       data: {
         ...(input.name !== undefined && { name: input.name?.trim() || null }),
-        ...(input.email !== undefined && { email: input.email?.trim() || null }),
-        ...(input.tags && { tags: [...new Set(input.tags.map((t) => t.trim().toLowerCase()).filter(Boolean))] }),
+        ...(email !== undefined && { email }),
+        ...(input.tags && { tags: cleanTags(input.tags) }),
         ...(attributes && { attributes: attributes as Prisma.InputJsonObject }),
       },
     });

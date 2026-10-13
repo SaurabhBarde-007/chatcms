@@ -1,5 +1,6 @@
 "use client";
 
+import { Plus } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useFetch } from "@/hooks/useFetch";
 import { api } from "@/lib/api-client";
@@ -7,7 +8,7 @@ import { classLabel, compactNumber, relativeTime } from "@/lib/format";
 import type { ContactRowDTO } from "@/lib/marketing/contacts";
 import type { OptInStatusName } from "@/lib/types";
 import { Card, ErrorNote, Page } from "../ui/Page";
-import { ContactDetailsDialog } from "./ContactDetailsDialog";
+import { ContactDialog } from "./ContactDialog";
 import { ImportDialog } from "./ImportDialog";
 import { OptInBadge } from "./OptInBadge";
 
@@ -35,6 +36,8 @@ export function ContactsScreen() {
   const [filters, setFilters] = useState<Filters>({ q: "", status: "", tag: "" });
   const [search, setSearch] = useState("");
   const [importing, setImporting] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [added, setAdded] = useState<string | null>(null);
   const tags = useFetch<TagsResponse>("/api/contacts/tags");
 
   // First page via useFetch; "Load more" pages are remembered per filter combination,
@@ -90,9 +93,14 @@ export function ContactsScreen() {
       title="Contacts"
       subtitle={list ? `${compactNumber(list.total)} contact${list.total === 1 ? "" : "s"}` : "Your WhatsApp audience"}
       actions={
-        <button className="btn-primary" onClick={() => setImporting(true)}>
-          Import CSV
-        </button>
+        <div className="flex gap-2">
+          <button className="btn" onClick={() => setImporting(true)}>
+            Import CSV
+          </button>
+          <button className="btn-primary flex items-center gap-1" onClick={() => setAdding(true)}>
+            <Plus size={15} /> Add contact
+          </button>
+        </div>
       }
     >
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -130,6 +138,11 @@ export function ContactsScreen() {
       </div>
 
       <ErrorNote>{error}</ErrorNote>
+      {added && (
+        <p className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800" role="status">
+          Added {added}.
+        </p>
+      )}
 
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
         <table className="w-full text-left text-sm">
@@ -150,7 +163,7 @@ export function ContactsScreen() {
             {list && !list.contacts.length && (
               <tr>
                 <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
-                  No contacts match. Import a CSV, or wait for customers to message you on WhatsApp.
+                  No contacts match. Add one, import a CSV, or wait for customers to message you on WhatsApp.
                 </td>
               </tr>
             )}
@@ -174,6 +187,16 @@ export function ContactsScreen() {
 
       <OptInApiHelp />
 
+      {adding && (
+        <ContactDialog
+          mode="create"
+          onClose={() => setAdding(false)}
+          onSaved={(c) => {
+            setAdded(c.name ? `${c.name} (${c.phone})` : (c.phone ?? "the contact"));
+            reloadAll();
+          }}
+        />
+      )}
       {importing && (
         <ImportDialog
           onClose={() => setImporting(false)}
@@ -232,7 +255,7 @@ function ContactRow({
         <div className="text-xs text-slate-500">{c.phone ?? "—"}</div>
         {c.email && <div className="text-xs text-slate-500">{c.email}</div>}
         {editingDetails && (
-          <ContactDetailsDialog contactId={c.id} contact={c} onClose={() => setEditingDetails(false)} onSaved={(details) => onChanged(details)} />
+          <ContactDialog mode="edit" contact={c} onClose={() => setEditingDetails(false)} onSaved={(details) => onChanged(details)} />
         )}
       </td>
       <td className="px-3 py-2">

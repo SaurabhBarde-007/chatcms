@@ -206,7 +206,7 @@ docs/API.md                     API campaigns: send templates (e.g. OTPs) from y
 
 ### Using it
 
-1. **Contacts**: import a CSV (needs a `phone` column; `name`, `email`, `school`, `class`, `tags`, `opted_in` and any custom columns are picked up), opt people in by hand, or collect opt-ins from your website through the opt-in API. Customers who message you appear automatically, but not as opted in. Click a contact's name (or **Edit details** in the inbox) to set their name, email, school and class.
+1. **Contacts**: **Add contact** one at a time (number, name, email, school, class, other details like a parent's name, tags, and whether they agreed to messages), import a CSV (needs a `phone` column; `name`, `email`, `school`, `class`, `tags`, `opted_in` and any custom columns are picked up), or collect opt-ins from your website through the opt-in API. Customers who message you appear automatically, but not as opted in. Click a contact's name (or **Edit details** in the inbox) to change their details; when someone you added messages you, the chat joins their contact.
 2. **Templates**: write your own (see below), start from the **Explore** library, or use ones made in WhatsApp Manager.
 3. **Segments**: save audiences such as "tagged vip, messaged us in the last 30 days, +91". A segment's size is live, and it's re-evaluated when a campaign starts.
 4. **Campaigns → Launch**:

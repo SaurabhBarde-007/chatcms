@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultVariables } from "../../components/campaigns/TemplateSetup";
-import { classLabel } from "../format";
+import { classLabel, fieldLabel } from "../format";
 import { profileAttributes } from "../marketing/contacts";
 import { mapCsvRows } from "../marketing/csv";
 import { canUseBuiltins, EMPTY_DRAFT, type TemplateDraft, withBuiltinSamples } from "../marketing/template-builder";
@@ -106,6 +106,11 @@ describe("contact details", () => {
   it("takes top-level school and class in API calls", () => {
     expect(profileAttributes({ school: " DPS ", class: "8", attributes: { city: "Pune" } })).toEqual({ school: "DPS", class: "8", city: "Pune" });
     expect(profileAttributes({})).toBeUndefined();
+  });
+
+  it("labels other details for display", () => {
+    expect(fieldLabel("parent_name")).toBe("Parent name");
+    expect(fieldLabel("city")).toBe("City");
   });
 
   it("labels classes for display", () => {

@@ -17,6 +17,12 @@ export function classLabel(value: unknown): string | null {
   return /^(class|grade|std|standard)\b/i.test(v) ? v : `Class ${v}`;
 }
 
+/** A custom field's name for display: "parent_name" → "Parent name". */
+export function fieldLabel(key: string): string {
+  const words = key.replace(/_+/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export function shortTime(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
