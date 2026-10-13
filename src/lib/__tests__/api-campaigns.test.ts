@@ -1,13 +1,11 @@
-import crypto from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { tierLimit } from "../marketing/account";
 import { containsKeyword, matchingCampaigns, parseTrigger } from "../marketing/api-campaigns";
 import { applyParams, consentProblem } from "../marketing/campaign-runner";
 import { estimateCost, toCsv } from "../marketing/campaigns";
 import { parseTemplate, type TemplateVariables } from "../marketing/templates";
-import { formatMoney, parseAmount } from "../payments/money";
-import { isValidWebhookSignature } from "../payments/razorpay";
-import { DEFAULT_PRICING, fillText } from "../settings";
+import { formatCurrency } from "../format";
+import { DEFAULT_PRICING } from "../settings";
 
 describe("auto-reply matching", () => {
   it("matches keywords as words or phrases, ignoring case and punctuation", () => {
@@ -76,27 +74,11 @@ describe("sending rules", () => {
   });
 });
 
-describe("payments helpers", () => {
-  it("verifies Razorpay webhook signatures", () => {
-    const body = JSON.stringify({ event: "payment_link.paid" });
-    const sig = crypto.createHmac("sha256", "whsec").update(body).digest("hex");
-    expect(isValidWebhookSignature(body, sig, "whsec")).toBe(true);
-    expect(isValidWebhookSignature(body, sig, "other")).toBe(false);
-    expect(isValidWebhookSignature(body + " ", sig, "whsec")).toBe(false);
-    expect(isValidWebhookSignature(body, null, "whsec")).toBe(false);
-  });
-
-  it("parses and formats rupees", () => {
-    expect(parseAmount("1,499.50")).toBe(149950);
-    expect(parseAmount("₹ 99")).toBe(9900);
-    expect(parseAmount("0")).toBeNull();
-    expect(parseAmount("abc")).toBeNull();
-    expect(formatMoney(149950)).toBe("₹1,499.50");
-    expect(formatMoney(9900)).toBe("₹99");
-  });
-
-  it("fills message text", () => {
-    expect(fillText("Hi {name}, pay {amount}: {link}", { name: "Asha", amount: "₹99", link: "https://rzp.io/x" })).toBe("Hi Asha, pay ₹99: https://rzp.io/x");
+describe("costs", () => {
+  it("formats estimated costs", () => {
+    expect(formatCurrency(1499.5)).toBe("₹1,499.50");
+    expect(formatCurrency(99)).toBe("₹99");
+    expect(formatCurrency(0.8631)).toBe("₹0.86");
   });
 });
 

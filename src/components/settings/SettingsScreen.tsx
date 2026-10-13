@@ -6,13 +6,12 @@ import { useFetch } from "@/hooks/useFetch";
 import { api } from "@/lib/api-client";
 import { compactNumber } from "@/lib/format";
 import type { AccountStatus } from "@/lib/marketing/account";
-import type { PaymentSettings, Pricing } from "@/lib/settings";
+import type { Pricing } from "@/lib/settings";
 import { Card, ErrorNote, Page } from "../ui/Page";
 
 type SettingsResponse = {
   pricing: Pricing;
-  payments: PaymentSettings;
-  status: { razorpay: { configured: boolean; mode: string | null; webhookSecret: boolean }; apiKey: boolean; cronSecret: boolean };
+  status: { apiKey: boolean; cronSecret: boolean };
 };
 const noSubscribe = () => () => {};
 
@@ -23,7 +22,7 @@ export function SettingsScreen() {
   const st = settings.data?.status;
 
   return (
-    <Page title="Settings" subtitle="Connections, payment messages and the rates used for cost estimates.">
+    <Page title="Settings" subtitle="Connections and the rates used for cost estimates.">
       <ErrorNote>{settings.error}</ErrorNote>
       <div className="grid gap-5 lg:grid-cols-2">
         <Card title="WhatsApp">
@@ -37,21 +36,6 @@ export function SettingsScreen() {
           <CopyField label="Webhook URL (Meta App → WhatsApp → Configuration)" value={`${origin}/api/webhooks/whatsapp`} />
         </Card>
 
-        <Card title="Razorpay (payments)">
-          {st && (
-            <ul className="space-y-1 text-sm">
-              <Check ok={st.razorpay.configured} text={st.razorpay.configured ? `Connected (${st.razorpay.mode} mode)` : "Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET"} />
-              <Check ok={st.razorpay.webhookSecret} text={st.razorpay.webhookSecret ? "Webhook secret set" : "Add RAZORPAY_WEBHOOK_SECRET"} />
-            </ul>
-          )}
-          <CopyField label="Webhook URL (Razorpay Dashboard → Accounts & Settings → Webhooks)" value={`${origin}/api/webhooks/razorpay`} />
-          <p className="mt-2 text-xs text-slate-500">
-            Events to tick: <code>payment_link.paid</code>, <code>payment_link.partially_paid</code>, <code>payment_link.expired</code>, <code>payment_link.cancelled</code>. Use the same secret as
-            RAZORPAY_WEBHOOK_SECRET.
-          </p>
-        </Card>
-
-        {settings.data && <PaymentMessages initial={settings.data.payments} onSaved={settings.reload} />}
         {settings.data && <Rates initial={settings.data.pricing} onSaved={settings.reload} />}
 
         <Card title="API & scheduling">
@@ -65,43 +49,6 @@ export function SettingsScreen() {
         </Card>
       </div>
     </Page>
-  );
-}
-
-function PaymentMessages({ initial, onSaved }: { initial: PaymentSettings; onSaved: () => void }) {
-  const [v, setV] = useState(initial);
-  return (
-    <Card title="Payment messages">
-      <SaveForm onSave={() => api.request("PUT", "/api/settings", { payments: v })} onSaved={onSaved}>
-        <label className="block text-sm">
-          <span className="field-title">Payment request (sent in chats)</span>
-          <textarea className="input mt-1 min-h-20" value={v.requestText} onChange={(e) => setV({ ...v, requestText: e.target.value })} />
-        </label>
-        <label className="mt-3 flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={v.sendReceipt} onChange={(e) => setV({ ...v, sendReceipt: e.target.checked })} />
-          Send a &ldquo;payment received&rdquo; message on WhatsApp (when the 24h window is open)
-        </label>
-        {v.sendReceipt && (
-          <label className="mt-2 block text-sm">
-            <span className="field-title">Payment received</span>
-            <textarea className="input mt-1 min-h-16" value={v.receiptText} onChange={(e) => setV({ ...v, receiptText: e.target.value })} />
-          </label>
-        )}
-        <label className="mt-3 flex items-center gap-2 text-sm">
-          Links expire after
-          <input
-            className="input w-20 py-1"
-            inputMode="numeric"
-            value={v.defaultExpiryHours}
-            onChange={(e) => setV({ ...v, defaultExpiryHours: Math.max(1, Number(e.target.value) || 1) })}
-          />
-          hours by default
-        </label>
-        <p className="mt-2 text-xs text-slate-500">
-          You can use {"{name}"}, {"{amount}"}, {"{description}"} and {"{link}"} (the request must include {"{link}"}).
-        </p>
-      </SaveForm>
-    </Card>
   );
 }
 

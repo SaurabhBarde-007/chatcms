@@ -63,22 +63,6 @@ export const env = {
     return env.apiKey;
   },
 
-  razorpay: {
-    get keyId() {
-      return process.env.RAZORPAY_KEY_ID ?? "";
-    },
-    get keySecret() {
-      return process.env.RAZORPAY_KEY_SECRET ?? "";
-    },
-    get webhookSecret() {
-      return process.env.RAZORPAY_WEBHOOK_SECRET ?? "";
-    },
-    /** Only changed for testing against a fake Razorpay. */
-    get apiBase() {
-      return process.env.RAZORPAY_API_BASE || "https://api.razorpay.com/v1";
-    },
-  },
-
   bot: {
     get ingestSecret() {
       return required("BOT_INGEST_SECRET");

@@ -20,6 +20,7 @@ export function toSummaryDTO(c: ConversationWithContact): ConversationSummaryDTO
       optInStatus: c.contact.optInStatus,
       tags: c.contact.tags,
       attributes: (c.contact.attributes ?? {}) as Record<string, unknown>,
+      blocked: c.contact.blocked,
     },
     lastMessageAt: c.lastMessageAt.toISOString(),
     lastMessageText: c.lastMessageText,

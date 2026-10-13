@@ -28,6 +28,8 @@ export class ApiCampaignError extends UserError {}
  */
 export async function queueAutoReply(input: { contactId: string; text: string | null | undefined; at: Date }): Promise<string[]> {
   if (isOptOutMessage(input.text)) return []; // never answer "STOP" with a template
+  const contact = await db.contact.findUnique({ where: { id: input.contactId }, select: { blocked: true } });
+  if (!contact || contact.blocked) return [];
 
   const live = await db.campaign.findMany({ where: { type: "API", status: "LIVE" } });
   if (!live.length) return [];

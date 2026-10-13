@@ -62,20 +62,6 @@ export const TEMPLATE_STARTERS: TemplateStarter[] = [
     }),
   },
   {
-    key: "payment_request",
-    title: "Payment request",
-    description: "Asks for a payment with a secure Razorpay link. Use with a campaign's \"Payment link\" value.",
-    draft: base({
-      name: "payment_request",
-      category: "UTILITY",
-      body: {
-        text: "Hi {{first_name}}, a payment of {{amount}} is due for {{purpose}}.\n\nPay securely here: {{payment_link}}\n\nThank you!",
-        examples: { first_name: "Asha", amount: "₹1,499", purpose: "your course enrolment", payment_link: "https://rzp.io/rzp/abc123" },
-      },
-      buttons: [{ type: "QUICK_REPLY", text: "I need help" }],
-    }),
-  },
-  {
     key: "payment_reminder",
     title: "Payment reminder",
     description: "A gentle reminder for a pending payment.",

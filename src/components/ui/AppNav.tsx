@@ -4,7 +4,6 @@ import {
   BarChart3,
   Contact,
   FileText,
-  IndianRupee,
   Layers,
   type LucideIcon,
   MessagesSquare,
@@ -20,7 +19,6 @@ const LINKS: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/segments", label: "Segments", icon: Layers },
   { href: "/templates", label: "Templates", icon: FileText },
   { href: "/campaigns", label: "Campaigns", icon: Send },
-  { href: "/payments", label: "Payments", icon: IndianRupee },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];
 

@@ -22,6 +22,8 @@ export type ContactRowDTO = {
   optInSource: string | null;
   optInAt: string | null;
   optOutAt: string | null;
+  /** Blocked by you: never messaged. */
+  blocked: boolean;
   lastActiveAt: string | null;
   createdAt: string;
 };
@@ -30,6 +32,8 @@ export type ContactFilters = {
   q?: string;
   status?: OptInStatus;
   tag?: string;
+  /** true: only blocked contacts. */
+  blocked?: boolean;
   cursor?: string;
 };
 
@@ -40,6 +44,7 @@ function contactWhere(f: ContactFilters): Prisma.ContactWhereInput {
   const digits = q?.replace(/\D/g, "");
   return {
     optInStatus: f.status,
+    ...(f.blocked && { blocked: true }),
     ...(f.tag && { tags: { has: f.tag } }),
     ...(q && {
       OR: [
@@ -92,6 +97,7 @@ function toContactRow(c: Prisma.ContactGetPayload<object>, lastActiveAt: Date | 
     optInSource: c.optInSource,
     optInAt: c.optInAt?.toISOString() ?? null,
     optOutAt: c.optOutAt?.toISOString() ?? null,
+    blocked: c.blocked,
     lastActiveAt: lastActiveAt?.toISOString() ?? null,
     createdAt: c.createdAt.toISOString(),
   };
@@ -177,6 +183,14 @@ export async function listTags(): Promise<{ tag: string; count: number }[]> {
   return rows;
 }
 
+/** The most common values of a custom field (e.g. every school), for audience filters. */
+export async function listAttributeValues(key: string, limit = 50): Promise<{ value: string; count: number }[]> {
+  return db.$queryRaw<{ value: string; count: number }[]>`
+    SELECT btrim(attributes ->> ${key}) AS value, COUNT(*)::int AS count FROM "Contact"
+    WHERE coalesce(btrim(attributes ->> ${key}), '') <> ''
+    GROUP BY 1 ORDER BY count DESC, value LIMIT ${limit}`;
+}
+
 /** Every custom field name in use (for template personalization). */
 export async function listAttributeKeys(): Promise<string[]> {
   const rows = await db.$queryRaw<{ key: string }[]>`
@@ -201,6 +215,8 @@ export async function updateContact(
     email?: string | null;
     tags?: string[];
     optInStatus?: "OPTED_IN" | "OPTED_OUT";
+    /** Block (never message) or unblock. */
+    blocked?: boolean;
     /** Custom fields to set; null or "" removes one. Others are kept. */
     attributes?: Record<string, string | null>;
   },
@@ -228,6 +244,7 @@ export async function updateContact(
         ...(email !== undefined && { email }),
         ...(input.tags && { tags: cleanTags(input.tags) }),
         ...(attributes && { attributes: attributes as Prisma.InputJsonObject }),
+        ...(input.blocked !== undefined && input.blocked !== contact.blocked && { blocked: input.blocked, blockedAt: input.blocked ? new Date() : null }),
       },
     });
     if (input.optInStatus) await setConsent(id, input.optInStatus, "manual", tx);

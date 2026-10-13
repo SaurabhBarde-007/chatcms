@@ -8,7 +8,6 @@ import {
   CheckCheck,
   Download,
   Hand,
-  IndianRupee,
   RefreshCw,
   Reply,
   Send,
@@ -17,10 +16,9 @@ import Link from "next/link";
 import { type ReactNode, useState, useSyncExternalStore } from "react";
 import { useFetch } from "@/hooks/useFetch";
 import { api } from "@/lib/api-client";
-import { compactNumber, fullTime, percent, relativeTime } from "@/lib/format";
+import { compactNumber, formatCurrency, fullTime, percent, relativeTime } from "@/lib/format";
 import type { ApiTrigger } from "@/lib/marketing/api-trigger";
 import type { CampaignDetailDTO, RecipientDTO, Stage } from "@/lib/marketing/campaigns";
-import { formatMoney } from "@/lib/payments/money";
 import { DailyColumns } from "../charts/DailyColumns";
 import { ErrorNote } from "../ui/Page";
 import { CampaignStatusBadge } from "./CampaignStatusBadge";
@@ -68,7 +66,6 @@ export function CampaignDetail({ id }: { id: string }) {
     { key: "read", label: "Read", value: s.read, icon: <CheckCheck size={15} className="text-sky-500" /> },
     { key: "replied", label: "Replied", value: s.replied, icon: <Reply size={15} /> },
     { key: "clicked", label: "Button taps", value: s.clicked, icon: <Hand size={15} /> },
-    ...(c.usesPaymentLinks ? [{ key: "paid" as const, label: "Paid", value: s.paid, icon: <IndianRupee size={15} className="text-emerald-600" /> }] : []),
     { key: "failed", label: "Failed", value: s.failed + s.skipped, icon: <AlertTriangle size={15} className="text-red-500" /> },
   ];
 
@@ -133,7 +130,7 @@ export function CampaignDetail({ id }: { id: string }) {
           </div>
         )}
 
-        {stage === "overview" ? <Overview c={c} onSaved={detail.reload} /> : <StageRecipients campaignId={c.id} stage={stage} payments={c.usesPaymentLinks} refreshKey={s.total - s.pending + s.delivered + s.read + s.replied + s.paid} />}
+        {stage === "overview" ? <Overview c={c} onSaved={detail.reload} /> : <StageRecipients campaignId={c.id} stage={stage} refreshKey={s.total - s.pending + s.delivered + s.read + s.replied} />}
       </div>
     </Shell>
   );
@@ -185,15 +182,15 @@ function Overview({ c, onSaved }: { c: CampaignDetailDTO; onSaved: () => void })
         <Info label="Created At" value={new Date(c.createdAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} />
         {c.type === "BROADCAST" && c.completedAt && <Info label="Completed At" value={new Date(c.completedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} />}
         {duration(c) && <Info label="Campaign Duration" value={duration(c)!} />}
-        <Info label="Audience" value={c.type === "API" ? "One person per trigger" : (c.segment?.name ?? "All opted-in contacts")} />
+        <Info label="Audience" value={c.audienceSummary} />
       </div>
 
       <div className="min-w-0 space-y-4">
         <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
           <Card label="Status" value={c.status === "COMPLETED" ? "SENT" : c.status} />
           <Card label="Audience" value={compactNumber(c.audienceSize ?? s.total)} />
-          <Card label="Total Credit Usage" value={formatMoney(Math.round(c.estimatedCost * 100), c.currency)} hint="Estimate: delivered messages × your message rate (Settings)." />
-          {c.usesPaymentLinks ? <Card label="Revenue" value={formatMoney(s.revenue)} sub={`${s.paid} paid`} /> : <Card label="Button taps" value={compactNumber(s.clicked)} />}
+          <Card label="Total Credit Usage" value={formatCurrency(c.estimatedCost, c.currency)} hint="Estimate: delivered messages × your message rate (Settings)." />
+          <Card label="Button taps" value={compactNumber(s.clicked)} />
         </div>
 
         <div className="grid grid-cols-2 gap-4 rounded-lg border border-slate-200 bg-white p-5 sm:grid-cols-4">
@@ -407,7 +404,7 @@ function ApiPanel({ c, onSaved }: { c: CampaignDetailDTO; onSaved: () => void })
 // Recipients at one stage
 // ---------------------------------------------------------------------------
 
-function StageRecipients({ campaignId, stage, payments, refreshKey }: { campaignId: string; stage: Stage; payments: boolean; refreshKey: number }) {
+function StageRecipients({ campaignId, stage, refreshKey }: { campaignId: string; stage: Stage; refreshKey: number }) {
   const key = `${stage}|${refreshKey}`;
   const first = useFetch<Recipients>(`/api/campaigns/${campaignId}/recipients?stage=${stage}&v=${refreshKey}`);
   const [extra, setExtra] = useState<{ key: string; rows: RecipientDTO[]; cursor: string | null }>({ key: "", rows: [], cursor: null });
@@ -437,7 +434,6 @@ function StageRecipients({ campaignId, stage, payments, refreshKey }: { campaign
               <th className="px-4 py-2 font-medium">Sent</th>
               <th className="px-4 py-2 font-medium">Read</th>
               <th className="px-4 py-2 font-medium">Replied</th>
-              {payments && <th className="px-4 py-2 font-medium">Payment</th>}
             </tr>
           </thead>
           <tbody>
@@ -458,22 +454,11 @@ function StageRecipients({ campaignId, stage, payments, refreshKey }: { campaign
                   {r.repliedAt ? fullTime(r.repliedAt) : "–"}
                   {r.buttonText && <div>tapped &ldquo;{r.buttonText}&rdquo;</div>}
                 </td>
-                {payments && (
-                  <td className="px-4 py-2 text-xs">
-                    {r.payment ? (
-                      <span className={r.payment.status === "PAID" ? "font-medium text-emerald-700" : "text-slate-600"}>
-                        {r.payment.status.toLowerCase().replace("_", " ")} · {formatMoney(r.payment.amountPaid || r.payment.amount)}
-                      </span>
-                    ) : (
-                      "–"
-                    )}
-                  </td>
-                )}
               </tr>
             ))}
             {first.data && rows.length === 0 && (
               <tr>
-                <td colSpan={payments ? 6 : 5} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
                   Nobody at this stage yet.
                 </td>
               </tr>

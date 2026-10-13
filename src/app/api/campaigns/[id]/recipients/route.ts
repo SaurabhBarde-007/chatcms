@@ -4,7 +4,7 @@ import { listRecipients, STAGES } from "@/lib/marketing/campaigns";
 
 const querySchema = z.object({ stage: z.enum(STAGES).default("all"), cursor: z.string().optional() });
 
-// GET /api/campaigns/:id/recipients?stage=sent|delivered|read|replied|clicked|failed|pending|paid&cursor=
+// GET /api/campaigns/:id/recipients?stage=sent|delivered|read|replied|clicked|failed|pending&cursor=
 export async function GET(req: NextRequest, ctx: RouteContext<"/api/campaigns/[id]/recipients">) {
   const params = Object.fromEntries([...req.nextUrl.searchParams].filter(([, v]) => v !== ""));
   const parsed = querySchema.safeParse(params);

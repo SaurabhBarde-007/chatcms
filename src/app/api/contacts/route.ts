@@ -7,10 +7,11 @@ const querySchema = z.object({
   q: z.string().optional(),
   status: z.enum(["UNKNOWN", "OPTED_IN", "OPTED_OUT"]).optional(),
   tag: z.string().optional(),
+  blocked: z.literal("1").transform(() => true).optional(),
   cursor: z.string().optional(),
 });
 
-// GET /api/contacts?q=&status=&tag=&cursor=  → { contacts, total, nextCursor }
+// GET /api/contacts?q=&status=&tag=&blocked=1&cursor=  → { contacts, total, nextCursor }
 export async function GET(req: NextRequest) {
   const params = Object.fromEntries([...req.nextUrl.searchParams].filter(([, v]) => v !== ""));
   const parsed = querySchema.safeParse(params);

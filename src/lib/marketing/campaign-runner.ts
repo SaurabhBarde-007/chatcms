@@ -2,18 +2,15 @@ import { Prisma, type Campaign, type Contact } from "@/generated/prisma/client";
 import { sendTemplateMessage, WhatsAppApiError } from "../channels/whatsapp";
 import { db } from "../db";
 import { env } from "../env";
+import { parseAudience, requiresOptIn } from "./audience";
+import { audienceCondition, audiencePage } from "./audience-query";
 import { REACHABLE, segmentRulesSchema, segmentWhere } from "./segments";
-import { createPaymentRequest } from "../payments/payments";
-import { isRazorpayConfigured } from "../payments/razorpay";
 import {
   buildTemplateComponents,
-  PAYMENT_LINK_PREFIX,
-  paymentSources,
   renderTemplateText,
   type Template,
   type TemplateContact,
   type TemplateVariables,
-  TemplateValueError,
   type ValueSource,
 } from "./templates";
 
@@ -126,8 +123,18 @@ export async function continueInNewRequest(origin: string) {
 // ---------------------------------------------------------------------------
 
 async function startCampaign(campaign: Campaign) {
-  const segment = campaign.segmentId ? await db.segment.findUnique({ where: { id: campaign.segmentId } }) : null;
-  const where = segment ? segmentWhere(segmentRulesSchema.parse(segment.rules)) : REACHABLE;
+  // Who matches right now: the audience filters, or (older campaigns) a segment / everyone opted in.
+  const audience = parseAudience(campaign.audience);
+  let nextPage: (tx: Prisma.TransactionClient, after: string | null) => Promise<{ id: string }[]>;
+  if (audience) {
+    const condition = await audienceCondition(audience.filters);
+    nextPage = (tx, after) => audiencePage(tx, condition, after, 5000);
+  } else {
+    const segment = campaign.segmentId ? await db.segment.findUnique({ where: { id: campaign.segmentId } }) : null;
+    const where = segment ? segmentWhere(segmentRulesSchema.parse(segment.rules)) : REACHABLE;
+    nextPage = (tx, after) =>
+      tx.contact.findMany({ where, select: { id: true }, orderBy: { id: "asc" }, take: 5000, ...(after && { cursor: { id: after }, skip: 1 }) });
+  }
 
   await db.$transaction(
     async (tx) => {
@@ -138,15 +145,9 @@ async function startCampaign(campaign: Campaign) {
       if (count === 0) return; // another run started it
 
       let total = 0;
-      let cursor: string | undefined;
+      let cursor: string | null = null;
       for (;;) {
-        const page = await tx.contact.findMany({
-          where,
-          select: { id: true },
-          orderBy: { id: "asc" },
-          take: 5000,
-          ...(cursor && { cursor: { id: cursor }, skip: 1 }),
-        });
+        const page = await nextPage(tx, cursor);
         if (!page.length) break;
         await tx.campaignRecipient.createMany({
           data: page.map((c) => ({ campaignId: campaign.id, contactId: c.id })),
@@ -221,12 +222,19 @@ export type Outcome = { kind: "sent" | "skipped" | "retry" | "failed" | "fatal";
  * one-off sends): anyone, except that marketing templates still respect opt-outs.
  */
 export function consentProblem(
-  campaign: Pick<Campaign, "type">,
+  campaign: Pick<Campaign, "type"> & { audience?: Campaign["audience"] },
   category: string,
-  contact: Pick<Contact, "waId" | "optInStatus">,
+  contact: Pick<Contact, "waId" | "optInStatus"> & { blocked?: boolean },
 ): string | null {
   if (!contact.waId) return "No WhatsApp number";
-  if (campaign.type === "BROADCAST") return contact.optInStatus === "OPTED_IN" ? null : "Not opted in (or opted out before the campaign reached them)";
+  if (contact.blocked) return "Blocked";
+  if (campaign.type === "BROADCAST") {
+    if (contact.optInStatus === "OPTED_OUT") return "Opted out";
+    // Opt-in is required unless the audience's "Opted in is Yes" filter was removed on purpose.
+    const audience = parseAudience(campaign.audience);
+    const optInRequired = !audience || requiresOptIn(audience.filters);
+    return optInRequired && contact.optInStatus !== "OPTED_IN" ? "Not opted in (or opted out before the campaign reached them)" : null;
+  }
   if (category === "MARKETING" && contact.optInStatus === "OPTED_OUT") return "Opted out of marketing messages";
   return null;
 }
@@ -249,44 +257,6 @@ export function applyParams(template: Template, vars: TemplateVariables, params:
     } else if (template.body.params.includes(key)) next.body[key] = text(v);
   }
   return next;
-}
-
-/** Create this recipient's payment link (once) and put it in place of the "payment" value. */
-async function withPaymentLink(
-  campaign: Campaign,
-  template: Template,
-  vars: TemplateVariables,
-  recipientId: string,
-  contact: Contact,
-): Promise<TemplateVariables> {
-  const [p] = paymentSources(template, vars);
-  if (!p) return vars;
-
-  const existing = await db.paymentRequest.findUnique({ where: { campaignRecipientId: recipientId } });
-  let link = existing?.shortUrl ?? null;
-  if (!link) {
-    const attr = p.source.amountField ? Number((contact.attributes as Record<string, unknown>)?.[p.source.amountField]) : NaN;
-    const rupees = Number.isFinite(attr) && attr > 0 ? attr : p.source.amount;
-    if (!(rupees > 0)) throw new TemplateValueError(`No payment amount${p.source.amountField ? ` in "${p.source.amountField}"` : ""}`);
-    const payment = await createPaymentRequest({
-      contactId: contact.id,
-      amount: Math.round(rupees * 100),
-      description: p.source.description,
-      expiresInHours: p.source.expiresInHours,
-      campaignId: campaign.id,
-      campaignRecipientId: recipientId,
-      sentVia: "campaign",
-    });
-    link = payment.shortUrl;
-  }
-  if (!link) throw new TemplateValueError("Couldn't create the payment link");
-
-  const value = p.group === "button" ? link.replace(PAYMENT_LINK_PREFIX, "") : link;
-  const source: ValueSource = { from: "text", value };
-  if (p.group === "header") return { ...vars, header: { ...vars.header, [p.key]: source } };
-  if (p.group === "body") return { ...vars, body: { ...vars.body, [p.key]: source } };
-  const key = String(p.buttonIndex);
-  return { ...vars, buttons: { ...vars.buttons, [key]: { ...vars.buttons[key], [p.key]: source } } };
 }
 
 async function sendToRecipient(
@@ -314,10 +284,6 @@ async function sendToRecipient(
   let variables: TemplateVariables;
   try {
     variables = applyParams(template, campaignVariables, params);
-    if (paymentSources(template, variables).length && !isRazorpayConfigured()) {
-      return await failRecipient(recipientId, "fatal", "Razorpay isn't set up (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET), so payment links can't be created");
-    }
-    variables = await withPaymentLink(campaign, template, variables, recipientId, contact);
     components = buildTemplateComponents(template, variables, templateContact);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -372,11 +338,6 @@ async function sendToRecipient(
     ]);
     return { kind: error.kind === "fatal" ? "fatal" : "failed", code: error.code, message: error.message };
   }
-}
-
-async function failRecipient(recipientId: string, kind: "failed" | "fatal", message: string): Promise<Outcome> {
-  await db.campaignRecipient.update({ where: { id: recipientId }, data: { status: "FAILED", failedAt: new Date(), error: message } });
-  return { kind, message };
 }
 
 /**

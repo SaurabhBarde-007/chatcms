@@ -7,7 +7,6 @@ Plus **WhatsApp marketing**, in the spirit of tools like AiSensy:
 - your own templates, including authentication (OTP); they're reviewed by WhatsApp and visible in WhatsApp Manager
 - broadcast campaigns, sent now or scheduled
 - API campaigns: auto-replies to incoming messages, or triggered from your systems
-- Razorpay payment links
 - engagement analytics
 
 See [WhatsApp marketing](#whatsapp-marketing).
@@ -74,14 +73,13 @@ Marketing adds:
 
 | Table | What it is |
 |---|---|
-| `Contact` (extra columns) | `waId` (one contact per WhatsApp number), `tags`, `attributes` (custom fields, incl. `school` and `class`), `optInStatus` + source and dates |
+| `Contact` (extra columns) | `waId` (one contact per WhatsApp number), `tags`, `attributes` (custom fields, incl. `school` and `class`), `optInStatus` + source and dates, `blocked` |
 | `ConsentEvent` | Every opt-in / opt-out, with its source. Audit trail + growth chart. |
 | `Segment` | A saved audience: rules, evaluated when a campaign starts |
-| `Campaign` | One template, sent as a `BROADCAST` (audience, schedule) or an `API` campaign (auto-reply trigger, Live/Paused). Holds a template snapshot and how placeholders are filled |
+| `Campaign` | One template, sent as a `BROADCAST` (audience filters, schedule) or an `API` campaign (auto-reply trigger, Live/Paused). Holds a template snapshot and how placeholders are filled |
 | `CampaignRecipient` | One send: status + sent/delivered/read/replied/button/opt-out times (and per-send values for API campaigns) |
-| `PaymentRequest` | A Razorpay payment link sent to a contact (from a chat, a campaign or the Payments page) and its status |
 | `TemplateDraft` | Templates you're still writing, and a record of what was submitted from here |
-| `Setting` | Message rates for cost estimates, and payment message texts |
+| `Setting` | Message rates for cost estimates |
 
 ## Project structure
 
@@ -128,12 +126,8 @@ src/
       template-starters.ts      The Explore library
       api-campaigns.ts          Auto-replies + API-triggered sends (api-trigger.ts: the matching rules)
       account.ts                Quality rating, messaging tier, remaining quota
-    payments/
-      razorpay.ts               Razorpay Payment Links API + webhook signatures
-      payments.ts               Payment requests: create, send in chat, list, cancel, webhook updates
-      money.ts                  ₹ formatting and parsing (paise)
-    settings.ts                 Settings with defaults (message rates, payment messages)
-  app/(app)/                    Pages: inbox, contacts, segments, templates, campaigns, payments, analytics, settings
+    settings.ts                 Settings with defaults (message rates)
+  app/(app)/                    Pages: inbox, contacts, segments, templates, campaigns, analytics, settings
   app/api/
     stream                      Live updates (SSE)
     webhooks/whatsapp           Meta webhook (verify + receive)
@@ -147,14 +141,12 @@ src/
     campaigns/...               Campaigns, templates, audience size, recipients, cancel
     cron/campaigns              Starts due campaigns (called by GitHub Actions)
     v1/campaigns/send           Trigger an API campaign from your systems (API_KEY)
-    payments/...                Payment links: list, create / send in chat, cancel
-    webhooks/razorpay           Razorpay payment updates
     account/status, settings    Number health; settings
     analytics                   Engagement numbers
   hooks/useInbox.ts             Inbox state + live updates
   hooks/useInboxStream.ts       EventSource connection + status
   components/inbox/             UI: list, thread, composer, contact panel, badges
-  components/{contacts,segments,templates,campaigns,payments,settings,analytics,charts}/   Marketing UI
+  components/{contacts,segments,templates,campaigns,settings,analytics,charts}/   Marketing UI
 .github/workflows/campaign-scheduler.yml   Every 30 min: start due campaigns
 scripts/                        Local simulators for your bot and for Meta
 docs/BOT_INTEGRATION.md         Contract for your chatbot team
@@ -190,11 +182,10 @@ docs/API.md                     API campaigns: send templates (e.g. OTPs) from y
 
 ### Setup
 
-1. **Database:** run `npm run db:deploy` (adds the marketing and payment tables).
+1. **Database:** run `npm run db:deploy` (adds the marketing tables).
 2. **Secrets in Vercel** (Settings → Environment Variables), then redeploy:
    - `CRON_SECRET`: a long random value (`openssl rand -hex 32`), for scheduled campaigns
    - `API_KEY`: another one, for API campaigns and the opt-in API ([docs/API.md](docs/API.md))
-   - `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`: to collect payments (see [Payments](#payments))
 3. **GitHub scheduler** (repo → Settings → Secrets and variables → Actions):
    - Secret `CRON_SECRET`: the same value as in Vercel
    - Variable `APP_URL`: e.g. `https://chatcms-one.vercel.app`
@@ -202,7 +193,7 @@ docs/API.md                     API campaigns: send templates (e.g. OTPs) from y
    Then push to the default branch and run **Actions → Campaign scheduler → Run workflow** once to check that it works. You should see `OK: {"ok":true}`. The workflow runs every 30 minutes whether or not anything is scheduled (each run just asks the app what's due). If a run fails, its log says what to fix: a missing or mismatched secret, or a wrong `APP_URL`.
 4. **WhatsApp:** a valid, permanent `WA_ACCESS_TOKEN` (temporary tokens expire after 24h and every send fails). It needs both `whatsapp_business_messaging` (sending) and `whatsapp_business_management` (templates) permissions.
 
-**Settings** (bottom of the sidebar) shows what's connected and gives you the webhook URLs to paste into Meta and Razorpay.
+**Settings** (bottom of the sidebar) shows what's connected and gives you the webhook URL to paste into Meta.
 
 ### Using it
 
@@ -210,11 +201,10 @@ docs/API.md                     API campaigns: send templates (e.g. OTPs) from y
 2. **Templates**: write your own (see below), start from the **Explore** library, or use ones made in WhatsApp Manager.
 3. **Segments**: save audiences such as "tagged vip, messaged us in the last 30 days, +91". A segment's size is live, and it's re-evaluated when a campaign starts.
 4. **Campaigns → Launch**:
-   - **Broadcast**: one template to a segment, now or scheduled.
+   - **Broadcast**: one template to the contacts matching your filters, now or scheduled (see below).
    - **API Campaign**: one person at a time, either as an **auto-reply** when customers message you or triggered by your systems ([docs/API.md](docs/API.md)).
-5. **Campaign page**: stage tabs (Sent, Delivered, Read, Replied, Button taps, Paid, Failed) with each stage's people and a CSV "User Report". Overview shows the duration, estimated **credit usage**, revenue from payment links, and messages per day.
-6. **Payments**: every payment link and its status, plus totals.
-7. **Analytics**: conversations, campaign engagement, and audience growth.
+5. **Campaign page**: stage tabs (Sent, Delivered, Read, Replied, Button taps, Failed) with each stage's people and a CSV "User Report". Overview shows the duration, estimated **credit usage**, button taps and messages per day.
+6. **Analytics**: conversations, campaign engagement, and audience growth.
 
 The Campaigns header shows your number's **quality rating**, **messaging tier** (how many people you can start conversations with per 24h) and the **remaining quota**.
 
@@ -250,6 +240,20 @@ A live preview shows how it will look, and every WhatsApp rule is checked before
 
 Carousels, flows, catalog and location headers aren't supported in the editor yet; create those in WhatsApp Manager.
 
+### Choosing a broadcast's audience
+
+**Select Audience** works like a list of filters that must all match. A new broadcast starts with **Opted in is Yes** and the fixed **Blocked is No**; **+ Add filter** adds more:
+
+- **Quick filters**: tags (has any / all / none of), created date, last seen (when they last wrote to you), opted in, a saved segment
+- **Attributes**: first name, name, mobile number (e.g. starts with 91), email, school, class, whether they've messaged you
+- **Custom attributes**: any other detail your contacts have, e.g. parent's name or city
+
+Text filters can be *is*, *is not*, *contains*, *doesn't contain*, *starts with*, *is empty* or *is not empty*, take several values ("School is DPS or KV"), and ignore capital letters. School, class and other details suggest the values your contacts actually have, with counts. Click a filter to change it, or × to remove it.
+
+Below the filters you see the number of contacts and the newest 10 of them. The audience is recounted when the campaign starts, so contacts added or changed in between are included.
+
+Removing **Opted in is Yes** includes people who haven't opted in yet (for example, students who gave their number on an admission form). You'll be asked to confirm you have their permission: WhatsApp requires it, and messaging people who didn't agree can lower your quality rating or get your number restricted.
+
 ### API campaigns and auto-replies
 
 An API campaign sends its template to one person at a time:
@@ -259,21 +263,10 @@ An API campaign sends its template to one person at a time:
 
 Switch an API campaign on and off with **Pause / Go live**. Every send shows up in its funnel like a broadcast.
 
-### Payments
-
-Collect money with **Razorpay payment links**:
-
-- **From a chat**: the **₹** button in the reply box creates a link and sends it in the chat. This needs the 24-hour window to be open.
-- **In a campaign**: set a placeholder's value to **"₹ Payment link"** with an amount (fixed, or from a custom field like `fee`) and a description. Every recipient gets their own link, and the campaign shows how many paid and the revenue. The **Payment request** starter template is built for this.
-- **Payments page**: every link with its status (pending, paid, partly paid, expired, cancelled), the payment method, and totals (collected, pending, conversion). You can create a link for any contact, copy it, or cancel it.
-
-When Razorpay reports a payment, the status updates and, if the chat window is open, the customer gets a "payment received" message. You can edit both messages in Settings.
-
-**Razorpay setup:** create API keys (Dashboard → Account & Settings → API Keys; test keys start with `rzp_test_`) and add a webhook pointing to `https://<your-domain>/api/webhooks/razorpay` with the events `payment_link.paid`, `payment_link.partially_paid`, `payment_link.expired` and `payment_link.cancelled`. Use the webhook's secret as `RAZORPAY_WEBHOOK_SECRET`.
-
 ### How sending works
 
-- **Broadcasts only go to opted-in contacts.** Consent is checked again right before each send, so anyone who opts out after a campaign is scheduled is skipped.
+- **Broadcasts go to opted-in contacts** unless you remove the "Opted in is Yes" filter and confirm you have their permission. People who opted out are never included. Consent is checked again right before each send, so anyone who opts out (or is blocked) after a campaign is scheduled is skipped.
+- **Blocked contacts never get anything:** no broadcasts, API campaigns, auto-replies or replies. Block someone from the Contacts page or the inbox's side panel; their messages still arrive in the inbox.
 - **API campaigns** (replies and one-off sends) go to anyone with a WhatsApp number, except that **marketing** templates still skip people who opted out.
 - **Opt-outs are automatic:** a reply of STOP, UNSUBSCRIBE or "Stop promotions" (e.g. a quick-reply button), or WhatsApp error 131050 (the person blocked your marketing), opts them out. A CSV import can't re-subscribe them; only they can, through you, the dashboard or the opt-in API.
 - **"Send now"** starts right away. **Scheduled** campaigns start on the next scheduler run after their time. The GitHub workflow runs every 30 minutes, so allow up to about 30–45 minutes.
@@ -322,11 +315,10 @@ The app works on any Node host: Vercel, Railway, Render, Fly or a VPS, with one 
 
 ## Limitations
 
-- **No login.** See the note at the top. With campaigns and payments this matters more: anyone with the URL could message your whole opted-in audience, create or cancel payment links, and change settings. (The `/api/v1` and opt-in APIs are protected by `API_KEY`; the dashboard isn't.)
+- **No login.** See the note at the top. With campaigns this matters more: anyone with the URL could message your whole opted-in audience and change settings. (The `/api/v1` and opt-in APIs are protected by `API_KEY`; the dashboard isn't.)
 - **Replies can only be text or WhatsApp templates.** Sending media from the dashboard isn't supported yet.
 - **The inbox's template picker fills body placeholders only.** Templates with media headers, header variables or button variables can be sent from Campaigns. Location headers, carousels, flows and catalog buttons aren't supported anywhere yet.
 - **No link-click tracking.** WhatsApp doesn't report URL button taps; quick-reply button taps are tracked.
-- **Payment links can't be sent in a chat outside the 24-hour window.** Use a campaign (a template with a "Payment link" value) instead.
 - **Credit usage is an estimate** from your configured rates; your Meta invoice is the source of truth.
 - **One customer can appear twice.** Someone who chats on both WhatsApp and your website becomes two separate contacts.
 - **No typing indicators.** These would need your bot to send typing events.

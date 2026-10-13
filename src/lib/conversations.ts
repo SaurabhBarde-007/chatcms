@@ -99,8 +99,9 @@ export async function markRead(id: string) {
  * then marked SENT or FAILED.
  */
 export async function sendReply(conversationId: string, outgoing: OutgoingMessage): Promise<MessageDTO> {
-  const conversation = await db.conversation.findUnique({ where: { id: conversationId } });
+  const conversation = await db.conversation.findUnique({ where: { id: conversationId }, include: { contact: { select: { blocked: true } } } });
   if (!conversation) throw new UserError("Conversation not found");
+  if (conversation.contact.blocked) throw new UserError("This contact is blocked. Unblock them to reply.");
 
   if (conversation.channel === "WHATSAPP") {
     if (outgoing.kind === "text" && !isWindowOpen(conversation.lastInboundAt)) {

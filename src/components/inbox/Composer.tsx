@@ -1,11 +1,9 @@
 "use client";
 
-import { IndianRupee } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/api-client";
 import type { ConversationDetailDTO, MessageDTO } from "@/lib/types";
 import { isWindowOpen } from "@/lib/whatsapp-window";
-import { ErrorNote, Modal } from "../ui/Page";
 import { TemplatePicker } from "./TemplatePicker";
 
 type Props = {
@@ -19,7 +17,6 @@ export function Composer({ conversation, onSent }: Props) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [useTemplate, setUseTemplate] = useState(false);
-  const [requestingPayment, setRequestingPayment] = useState(false);
 
   const isWhatsApp = conversation.channel === "WHATSAPP";
   const windowOpen = isWindowOpen(conversation.lastInboundAt);
@@ -45,6 +42,16 @@ export function Composer({ conversation, onSent }: Props) {
     if (!value || sending) return;
     setText(""); // the message shows up in the thread right away (as "sending")
     send({ kind: "text", text: value }, text);
+  }
+
+  if (conversation.contact.blocked) {
+    return (
+      <div className="border-t border-slate-200 bg-white p-3">
+        <p className="rounded bg-red-50 px-3 py-2 text-sm text-red-800">
+          You blocked this contact, so you can&apos;t message them. Unblock them in the panel on the right to reply.
+        </p>
+      </div>
+    );
   }
 
   return (
@@ -89,14 +96,9 @@ export function Composer({ conversation, onSent }: Props) {
           />
           <div className="flex flex-col gap-1">
             {isWhatsApp && (
-              <div className="flex gap-1">
-                <button className="btn flex-1" onClick={() => setUseTemplate(true)}>
-                  Template
-                </button>
-                <button className="btn px-2" title="Request a payment" aria-label="Request a payment" onClick={() => setRequestingPayment(true)}>
-                  <IndianRupee size={15} />
-                </button>
-              </div>
+              <button className="btn" onClick={() => setUseTemplate(true)}>
+                Template
+              </button>
             )}
             <button className="btn-primary" disabled={sending || !text.trim()} onClick={sendText}>
               {sending ? "Sending…" : "Send"}
@@ -104,63 +106,6 @@ export function Composer({ conversation, onSent }: Props) {
           </div>
         </div>
       )}
-      {requestingPayment && <RequestPaymentDialog conversationId={conversation.id} onClose={() => setRequestingPayment(false)} />}
     </div>
-  );
-}
-
-/** Create a Razorpay link and send it in this chat (the 24h window is open here). */
-function RequestPaymentDialog({ conversationId, onClose }: { conversationId: string; onClose: () => void }) {
-  const [amount, setAmount] = useState("");
-  const [description, setDescription] = useState("");
-  const [hours, setHours] = useState(72);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function send() {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.post("/api/payments", { conversationId, amount, description, expiresInHours: hours });
-      onClose(); // the message appears in the chat by itself
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create the payment link");
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal title="Request a payment" onClose={onClose}>
-      <div className="space-y-3 text-sm">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block">
-            <span className="field-title">Amount (₹)</span>
-            <input className="input mt-1" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="1499" autoFocus />
-          </label>
-          <label className="block">
-            <span className="field-title">Link expires after</span>
-            <select className="input mt-1" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
-              <option value={24}>1 day</option>
-              <option value={72}>3 days</option>
-              <option value={168}>7 days</option>
-            </select>
-          </label>
-        </div>
-        <label className="block">
-          <span className="field-title">What it&apos;s for</span>
-          <input className="input mt-1" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Course fee – October batch" />
-        </label>
-        <p className="text-xs text-slate-500">They get a WhatsApp message with a secure Razorpay link. You&apos;ll see it marked paid under Payments.</p>
-        <ErrorNote>{error}</ErrorNote>
-        <div className="flex justify-end gap-2">
-          <button className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn-primary" disabled={!amount || !description.trim() || busy} onClick={send}>
-            {busy ? "Sending…" : "Send payment link"}
-          </button>
-        </div>
-      </div>
-    </Modal>
   );
 }

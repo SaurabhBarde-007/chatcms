@@ -127,18 +127,8 @@ export function parseTemplate(raw: RawTemplate): Template {
 export type ValueSource =
   | { from: "text"; value: string }
   | { from: "contact"; field: ContactField; fallback: string }
-  /**
-   * A Razorpay payment link made for each recipient when the message is sent.
-   * `amount` in rupees, or `amountField` to read it from a custom field (e.g. "fee").
-   */
-  | { from: "payment"; amount: number; amountField?: string; description: string; expiresInHours?: number }
   /** API campaigns: given in each API call's params (e.g. an OTP code or an order number). */
   | { from: "api" };
-
-/** What a payment-link value looks like in previews. */
-export const SAMPLE_PAYMENT_LINK = "https://rzp.io/rzp/sample";
-/** Payment links can go in a URL button only if its address starts with this. */
-export const PAYMENT_LINK_PREFIX = "https://rzp.io/";
 
 /** "attr:city" reads a custom field imported from CSV / the opt-in API. */
 export type ContactField = "name" | "first_name" | "phone" | "email" | `attr:${string}`;
@@ -227,9 +217,8 @@ function clean(value: string): string {
 export function resolveValue(source: ValueSource | undefined, contact: TemplateContact): string {
   if (!source) return "";
   if (source.from === "text") return clean(source.value);
-  // Payment links are created per recipient by the sender, and API values come with each call;
-  // both are swapped in as text before this.
-  if (source.from === "payment" || source.from === "api") return "";
+  // API values come with each call and are swapped in as text before this.
+  if (source.from === "api") return "";
   return clean(contactValue(contact, source.field)) || clean(source.fallback);
 }
 
@@ -239,19 +228,6 @@ export function usesApiValues(vars: TemplateVariables): boolean {
   return all.some((s) => s.from === "api");
 }
 
-/** Every placeholder that takes a payment link: where it is, and its settings. */
-export function paymentSources(template: Template, vars: TemplateVariables) {
-  const found: { group: "header" | "body" | "button"; key: string; buttonIndex?: number; source: Extract<ValueSource, { from: "payment" }> }[] = [];
-  for (const [key, source] of Object.entries(vars.header)) if (source.from === "payment") found.push({ group: "header", key, source });
-  for (const [key, source] of Object.entries(vars.body)) if (source.from === "payment") found.push({ group: "body", key, source });
-  for (const b of template.buttons) {
-    for (const [key, source] of Object.entries(vars.buttons[String(b.index)] ?? {})) {
-      if (source.from === "payment") found.push({ group: "button", key, buttonIndex: b.index, source });
-    }
-  }
-  return found;
-}
-
 /** Human-readable list of what's still missing before this template can be sent. */
 export function missingVariables(template: Template, vars: TemplateVariables): string[] {
   const missing: string[] = [];
@@ -259,11 +235,6 @@ export function missingVariables(template: Template, vars: TemplateVariables): s
     for (const p of params) {
       const s = sources?.[p];
       if (s?.from === "api") continue;
-      if (s?.from === "payment") {
-        if (!(s.amount > 0) && !s.amountField) missing.push(`${where} {{${p}}} payment amount`);
-        if (!s.description.trim()) missing.push(`${where} {{${p}}} payment description`);
-        continue;
-      }
       // Every WhatsApp contact has a phone number, so it needs no fallback.
       const ok = s && (s.from === "text" ? clean(s.value) : s.field === "phone" || clean(s.fallback));
       if (!ok) missing.push(`${where} {{${p}}}${s?.from === "contact" ? " needs a fallback" : ""}`);
@@ -276,15 +247,6 @@ export function missingVariables(template: Template, vars: TemplateVariables): s
   }
   check("Body", template.body.params, vars.body);
   for (const b of template.buttons) check(`Button "${b.text}"`, b.params, vars.buttons[String(b.index)]);
-
-  const payments = paymentSources(template, vars);
-  if (payments.length > 1) missing.push("Only one placeholder can be a payment link");
-  for (const p of payments) {
-    const button = p.group === "button" ? template.buttons.find((b) => b.index === p.buttonIndex) : null;
-    if (button && !(button.url ?? "").startsWith(PAYMENT_LINK_PREFIX)) {
-      missing.push(`Button "${button.text}" can't hold a payment link (its address must start with ${PAYMENT_LINK_PREFIX}); use a body placeholder instead`);
-    }
-  }
   return missing;
 }
 
@@ -368,7 +330,7 @@ export function buildTemplateComponents(
 export function renderTemplateText(template: Template, vars: TemplateVariables, contact: TemplateContact): string {
   const fill = (text: string, sources: Record<string, ValueSource> | undefined) =>
     text.replace(PLACEHOLDER, (m, p: string) =>
-      sources?.[p]?.from === "payment" ? SAMPLE_PAYMENT_LINK : sources?.[p]?.from === "api" ? `[${p}]` : resolveValue(sources?.[p], contact) || m,
+      sources?.[p]?.from === "api" ? `[${p}]` : resolveValue(sources?.[p], contact) || m,
     );
 
   const parts: string[] = [];

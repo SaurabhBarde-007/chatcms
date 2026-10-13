@@ -51,7 +51,7 @@ export function CampaignsScreen() {
               <div role="menu" className="absolute right-0 z-20 mt-1 w-64 rounded-lg border border-slate-200 bg-white p-1 shadow-lg" onMouseLeave={() => setLaunchOpen(false)}>
                 <Link role="menuitem" href="/campaigns/new" className="block rounded-md px-3 py-2 hover:bg-slate-50">
                   <span className="block text-sm font-medium">Broadcast</span>
-                  <span className="block text-xs text-slate-500">Send a template to a segment, now or scheduled</span>
+                  <span className="block text-xs text-slate-500">Send a template to filtered contacts, now or scheduled</span>
                 </Link>
                 <Link role="menuitem" href="/campaigns/new-api" className="block rounded-md px-3 py-2 hover:bg-slate-50">
                   <span className="block text-sm font-medium">API Campaign</span>

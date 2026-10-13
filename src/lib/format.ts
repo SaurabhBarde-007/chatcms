@@ -17,6 +17,11 @@ export function classLabel(value: unknown): string | null {
   return /^(class|grade|std|standard)\b/i.test(v) ? v : `Class ${v}`;
 }
 
+/** 12.5 → "₹12.50", 300 → "₹300" (e.g. estimated WhatsApp costs). */
+export function formatCurrency(amount: number, currency = "INR"): string {
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency, minimumFractionDigits: Number.isInteger(amount) ? 0 : 2, maximumFractionDigits: 2 }).format(amount);
+}
+
 /** A custom field's name for display: "parent_name" → "Parent name". */
 export function fieldLabel(key: string): string {
   const words = key.replace(/_+/g, " ").trim();

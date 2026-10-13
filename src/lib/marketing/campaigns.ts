@@ -2,11 +2,10 @@ import type { Campaign, CampaignStatus, CampaignType, Prisma, RecipientStatus } 
 import { listTemplates } from "../channels/whatsapp";
 import { db } from "../db";
 import { UserError } from "../errors";
-import { isRazorpayConfigured } from "../payments/razorpay";
 import { getSetting, type Pricing } from "../settings";
 import { type ApiTrigger, parseTrigger } from "./api-trigger";
-import { REACHABLE, segmentRulesSchema, segmentWhere } from "./segments";
-import { missingVariables, paymentSources, renderTemplateText, type Template, type TemplateVariables, usesApiValues } from "./templates";
+import { type AudienceFilter, DEFAULT_FILTERS, describeAudience, parseAudience, segmentIds } from "./audience";
+import { missingVariables, renderTemplateText, type Template, type TemplateVariables, usesApiValues } from "./templates";
 
 // Campaigns as the dashboard sees them. Sending itself is in ./campaign-runner.ts.
 
@@ -23,10 +22,6 @@ export type CampaignStats = {
   failed: number;
   skipped: number;
   optedOut: number;
-  /** Payment links paid (campaigns with a "Payment link" value). */
-  paid: number;
-  /** Amount collected, in paise. */
-  revenue: number;
 };
 
 export type CampaignDTO = {
@@ -38,6 +33,10 @@ export type CampaignDTO = {
   templateLanguage: string;
   templateCategory: string | null;
   segment: { id: string; name: string } | null;
+  /** Broadcasts: the audience filters (null for older campaigns, which use `segment`). */
+  audience: AudienceFilter[] | null;
+  /** e.g. "Opted in · School is DPS · Class is 10" */
+  audienceSummary: string;
   trigger: ApiTrigger | null;
   audienceSize: number | null;
   scheduledAt: string | null;
@@ -55,19 +54,17 @@ export type CampaignDetailDTO = CampaignDTO & {
   template: Template;
   variables: TemplateVariables;
   preview: string;
-  usesPaymentLinks: boolean;
   failureReasons: { code: number | null; error: string; count: number }[];
   buttonTaps: { text: string; count: number }[];
 };
 
 export const EMPTY_STATS: CampaignStats = {
-  total: 0, pending: 0, sent: 0, delivered: 0, read: 0, replied: 0, clicked: 0, failed: 0, skipped: 0, optedOut: 0, paid: 0, revenue: 0,
+  total: 0, pending: 0, sent: 0, delivered: 0, read: 0, replied: 0, clicked: 0, failed: 0, skipped: 0, optedOut: 0,
 };
 
 export async function campaignStats(ids: string[]): Promise<Map<string, CampaignStats>> {
   if (!ids.length) return new Map();
-  const [rows, payments] = await Promise.all([
-    db.$queryRaw<(Omit<CampaignStats, "paid" | "revenue"> & { campaignId: string })[]>`
+  const rows = await db.$queryRaw<(CampaignStats & { campaignId: string })[]>`
       SELECT "campaignId",
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE status IN ('PENDING', 'SENDING'))::int AS pending,
@@ -81,21 +78,8 @@ export async function campaignStats(ids: string[]): Promise<Map<string, Campaign
         COUNT("optedOutAt")::int AS "optedOut"
       FROM "CampaignRecipient"
       WHERE "campaignId" = ANY(${ids})
-      GROUP BY "campaignId"`,
-    db.paymentRequest.groupBy({
-      by: ["campaignId"],
-      where: { campaignId: { in: ids }, status: { in: ["PAID", "PARTIALLY_PAID"] } },
-      _count: { _all: true },
-      _sum: { amountPaid: true },
-    }),
-  ]);
-  const paid = new Map(payments.map((p) => [p.campaignId, p]));
-  return new Map(
-    rows.map(({ campaignId, ...stats }) => [
-      campaignId,
-      { ...stats, paid: paid.get(campaignId)?._count._all ?? 0, revenue: paid.get(campaignId)?._sum.amountPaid ?? 0 },
-    ]),
-  );
+      GROUP BY "campaignId"`;
+  return new Map(rows.map(({ campaignId, ...stats }) => [campaignId, stats]));
 }
 
 /** WhatsApp charges per delivered message, by template category. */
@@ -106,8 +90,17 @@ export function estimateCost(delivered: number, category: string | null, pricing
 
 type CampaignWithSegment = Campaign & { segment: { id: string; name: string } | null };
 
-function toDTO(c: CampaignWithSegment, stats: CampaignStats | undefined, pricing: Pricing): CampaignDTO {
+/** Names of the segments these campaigns' audiences refer to. */
+async function segmentNames(campaigns: Campaign[]): Promise<Record<string, string>> {
+  const ids = [...new Set(campaigns.flatMap((c) => segmentIds(parseAudience(c.audience)?.filters ?? [])))];
+  if (!ids.length) return {};
+  const rows = await db.segment.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
+  return Object.fromEntries(rows.map((r) => [r.id, r.name]));
+}
+
+function toDTO(c: CampaignWithSegment, stats: CampaignStats | undefined, pricing: Pricing, names: Record<string, string> = {}): CampaignDTO {
   const s = stats ?? EMPTY_STATS;
+  const audience = c.type === "BROADCAST" ? (parseAudience(c.audience)?.filters ?? null) : null;
   return {
     id: c.id,
     name: c.name,
@@ -117,6 +110,9 @@ function toDTO(c: CampaignWithSegment, stats: CampaignStats | undefined, pricing
     templateLanguage: c.templateLanguage,
     templateCategory: c.templateCategory,
     segment: c.segment ? { id: c.segment.id, name: c.segment.name } : null,
+    audience,
+    audienceSummary:
+      c.type === "API" ? "One person per trigger" : audience ? describeAudience(audience, names) : (c.segment?.name ?? "All opted-in contacts"),
     trigger: c.type === "API" ? parseTrigger(c.trigger) : null,
     audienceSize: c.type === "API" ? s.total : c.audienceSize,
     scheduledAt: c.scheduledAt?.toISOString() ?? null,
@@ -135,8 +131,8 @@ export async function listCampaigns(): Promise<CampaignDTO[]> {
     db.campaign.findMany({ orderBy: { createdAt: "desc" }, take: 500, include: { segment: { select: { id: true, name: true } } } }),
     getSetting("pricing"),
   ]);
-  const stats = await campaignStats(campaigns.map((c) => c.id));
-  return campaigns.map((c) => toDTO(c, stats.get(c.id), pricing));
+  const [stats, names] = await Promise.all([campaignStats(campaigns.map((c) => c.id)), segmentNames(campaigns)]);
+  return campaigns.map((c) => toDTO(c, stats.get(c.id), pricing, names));
 }
 
 /** Used for previews: fields show as e.g. "Asha", attributes as their fallback. */
@@ -146,7 +142,7 @@ export async function getCampaign(id: string): Promise<CampaignDetailDTO | null>
   const c = await db.campaign.findUnique({ where: { id }, include: { segment: { select: { id: true, name: true } } } });
   if (!c) return null;
 
-  const [stats, failureReasons, buttonTaps, pricing] = await Promise.all([
+  const [stats, failureReasons, buttonTaps, pricing, names] = await Promise.all([
     campaignStats([id]),
     db.$queryRaw<{ code: number | null; error: string; count: number }[]>`
       SELECT "errorCode" AS code, COALESCE(error, 'Unknown error') AS error, COUNT(*)::int AS count
@@ -157,16 +153,16 @@ export async function getCampaign(id: string): Promise<CampaignDetailDTO | null>
       FROM "CampaignRecipient" WHERE "campaignId" = ${id} AND "buttonAt" IS NOT NULL
       GROUP BY 1 ORDER BY count DESC`,
     getSetting("pricing"),
+    segmentNames([c]),
   ]);
 
   const template = c.template as unknown as Template;
   const variables = c.variables as unknown as TemplateVariables;
   return {
-    ...toDTO(c, stats.get(id), pricing),
+    ...toDTO(c, stats.get(id), pricing, names),
     template,
     variables,
     preview: renderTemplateText(template, variables, SAMPLE_CONTACT),
-    usesPaymentLinks: paymentSources(template, variables).length > 0,
     failureReasons,
     buttonTaps,
   };
@@ -188,7 +184,7 @@ export async function campaignDaily(id: string, timeZone: string) {
 // Recipients, by funnel stage
 // ---------------------------------------------------------------------------
 
-export const STAGES = ["all", "sent", "delivered", "read", "replied", "clicked", "failed", "pending", "paid"] as const;
+export const STAGES = ["all", "sent", "delivered", "read", "replied", "clicked", "failed", "pending"] as const;
 export type Stage = (typeof STAGES)[number];
 
 function stageWhere(campaignId: string, stage: Stage): Prisma.CampaignRecipientWhereInput {
@@ -207,8 +203,6 @@ function stageWhere(campaignId: string, stage: Stage): Prisma.CampaignRecipientW
       return { campaignId, status: { in: ["FAILED", "SKIPPED"] } };
     case "pending":
       return { campaignId, status: { in: ["PENDING", "SENDING"] } };
-    case "paid":
-      return { campaignId, paymentRequest: { status: { in: ["PAID", "PARTIALLY_PAID"] } } };
     default:
       return { campaignId };
   }
@@ -228,12 +222,10 @@ export type RecipientDTO = {
   readAt: string | null;
   repliedAt: string | null;
   buttonText: string | null;
-  payment: { status: string; amount: number; amountPaid: number; shortUrl: string | null } | null;
 };
 
 const recipientInclude = {
   contact: { select: { name: true, waId: true } },
-  paymentRequest: { select: { status: true, amount: true, amountPaid: true, shortUrl: true } },
 } as const;
 
 function toRecipientDTO(r: Prisma.CampaignRecipientGetPayload<{ include: typeof recipientInclude }>): RecipientDTO {
@@ -251,7 +243,6 @@ function toRecipientDTO(r: Prisma.CampaignRecipientGetPayload<{ include: typeof 
     readAt: r.readAt?.toISOString() ?? null,
     repliedAt: r.repliedAt?.toISOString() ?? null,
     buttonText: r.buttonText,
-    payment: r.paymentRequest,
   };
 }
 
@@ -282,21 +273,21 @@ export async function allRecipients(campaignId: string, stage: Stage = "all"): P
 // Creating
 // ---------------------------------------------------------------------------
 
-/** How many contacts a campaign to this segment (or everyone opted in) would reach right now. */
-export async function audienceSize(segmentId: string | null): Promise<number> {
-  if (!segmentId) return db.contact.count({ where: REACHABLE });
-  const segment = await db.segment.findUnique({ where: { id: segmentId } });
-  if (!segment) throw new CampaignError("Segment not found");
-  return db.contact.count({ where: segmentWhere(segmentRulesSchema.parse(segment.rules)) });
-}
-
 export type CreateCampaignInput = {
   name: string;
   templateName: string;
   templateLanguage: string;
   variables: TemplateVariables;
 } & (
-  | { type: "BROADCAST"; segmentId: string | null; /** null = send now */ scheduledAt: Date | null }
+  | {
+      type: "BROADCAST";
+      /** Who gets it. Default: everyone opted in. */
+      audience?: { filters: AudienceFilter[] };
+      /** Older clients: a segment instead of filters. */
+      segmentId?: string | null;
+      /** null = send now */
+      scheduledAt: Date | null;
+    }
   | { type: "API"; trigger: ApiTrigger; live: boolean }
 );
 
@@ -307,9 +298,6 @@ export async function createCampaign(input: CreateCampaignInput): Promise<Campai
 
   const missing = missingVariables(template, input.variables);
   if (missing.length) throw new CampaignError(`Fill in: ${missing.join(", ")}`);
-  if (paymentSources(template, input.variables).length && !isRazorpayConfigured()) {
-    throw new CampaignError("Payment links need Razorpay: set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET first.");
-  }
   if (input.type === "BROADCAST" && template.category === "AUTHENTICATION") {
     throw new CampaignError("Authentication (OTP) templates are sent one person at a time. Use an API campaign.");
   }
@@ -334,10 +322,13 @@ export async function createCampaign(input: CreateCampaignInput): Promise<Campai
 
   let campaign;
   if (input.type === "BROADCAST") {
-    if (input.segmentId && !(await db.segment.findUnique({ where: { id: input.segmentId } }))) throw new CampaignError("Segment not found");
+    const filters =
+      input.audience?.filters ?? (input.segmentId ? [{ kind: "segment" as const, op: "in" as const, segmentId: input.segmentId }] : DEFAULT_FILTERS);
+    const ids = segmentIds(filters);
+    if (ids.length && (await db.segment.count({ where: { id: { in: ids } } })) < ids.length) throw new CampaignError("Segment not found");
     if (input.scheduledAt && input.scheduledAt.getTime() < now.getTime() - 60_000) throw new CampaignError("The scheduled time is in the past.");
     campaign = await db.campaign.create({
-      data: { ...common, status: "SCHEDULED", segmentId: input.segmentId, scheduledAt: input.scheduledAt ?? now },
+      data: { ...common, status: "SCHEDULED", audience: { filters }, scheduledAt: input.scheduledAt ?? now },
       include: { segment: { select: { id: true, name: true } } },
     });
   } else {
@@ -349,7 +340,7 @@ export async function createCampaign(input: CreateCampaignInput): Promise<Campai
       include: { segment: { select: { id: true, name: true } } },
     });
   }
-  return toDTO(campaign, undefined, await getSetting("pricing"));
+  return toDTO(campaign, undefined, await getSetting("pricing"), await segmentNames([campaign]));
 }
 
 /** Stop a scheduled or sending broadcast. Messages already sent stay sent. */

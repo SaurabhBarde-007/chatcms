@@ -1,6 +1,5 @@
 "use client";
 
-import { IndianRupee } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   BUILTIN_ATTRIBUTES,
@@ -145,7 +144,7 @@ export function TemplateSetup({
                   <ValueSourceRow key={`h${p}`} label={`Header {{${p}}}`} value={variables.header[p]} onChange={(s) => setSource("header", p, s)} {...rowProps} />
                 ))}
               {template.body.params.map((p) => (
-                <ValueSourceRow key={`b${p}`} label={`{{${p}}}`} value={variables.body[p]} onChange={(s) => setSource("body", p, s)} {...rowProps} allowPayment />
+                <ValueSourceRow key={`b${p}`} label={`{{${p}}}`} value={variables.body[p]} onChange={(s) => setSource("body", p, s)} {...rowProps} />
               ))}
               {template.buttons
                 .filter((b) => b.params.length)
@@ -158,7 +157,6 @@ export function TemplateSetup({
                       value={variables.buttons[b.index]?.[p]}
                       onChange={(s) => setButtonSource(b.index, p, s)}
                       {...rowProps}
-                      allowPayment={(b.url ?? "").startsWith("https://rzp.io/")}
                     />
                   )),
                 )}
@@ -179,7 +177,7 @@ const CONTACT_FIELDS = [
   { value: "contact:name", label: "Full name" },
 ];
 
-/** One placeholder: where its value comes from (+ the text, fallback or payment details). */
+/** One placeholder: where its value comes from (+ the text or fallback). */
 function ValueSourceRow({
   label,
   hint,
@@ -187,7 +185,6 @@ function ValueSourceRow({
   fields,
   kind,
   autoReply,
-  allowPayment,
   onChange,
 }: {
   label: string;
@@ -196,16 +193,14 @@ function ValueSourceRow({
   fields: string[];
   kind: CampaignKind;
   autoReply: boolean;
-  allowPayment?: boolean;
   onChange: (s: ValueSource) => void;
 }) {
   const source: string =
-    !value || value.from === "text" ? "text" : value.from === "payment" ? "payment" : value.from === "api" ? "api" : `contact:${value.field}`;
+    !value || value.from === "text" ? "text" : value.from === "api" ? "api" : `contact:${value.field}`;
 
   function choose(k: string) {
     if (k === "text") onChange({ from: "text", value: "" });
     else if (k === "api") onChange({ from: "api" });
-    else if (k === "payment") onChange({ from: "payment", amount: 0, description: "", expiresInHours: 72 });
     else {
       const field = k.slice("contact:".length) as ContactField;
       onChange({ from: "contact", field, fallback: BUILTIN_VARIABLES.find((v) => v.field === field)?.fallback ?? "" });
@@ -213,47 +208,7 @@ function ValueSourceRow({
   }
 
   let detail: ReactNode;
-  if (value?.from === "payment") {
-    detail = (
-      <div className="grid gap-2 rounded-md border border-emerald-200 bg-emerald-50/50 p-2 sm:grid-cols-3">
-        <label className="text-xs text-slate-600">
-          Amount (₹)
-          <input
-            className="input mt-0.5"
-            inputMode="decimal"
-            value={value.amount || ""}
-            onChange={(e) => onChange({ ...value, amount: Number(e.target.value.replace(/[^\d.]/g, "")) || 0 })}
-            placeholder="1499"
-          />
-        </label>
-        <label className="text-xs text-slate-600">
-          …or from custom field
-          <select className="input mt-0.5" value={value.amountField ?? ""} onChange={(e) => onChange({ ...value, amountField: e.target.value || undefined })}>
-            <option value="">(same for everyone)</option>
-            {fields.map((f) => (
-              <option key={f} value={f}>
-                {f}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs text-slate-600">
-          Link expires after
-          <select className="input mt-0.5" value={value.expiresInHours ?? 72} onChange={(e) => onChange({ ...value, expiresInHours: Number(e.target.value) })}>
-            {[24, 72, 168, 720].map((h) => (
-              <option key={h} value={h}>
-                {h < 168 ? `${h / 24} day${h > 24 ? "s" : ""}` : `${h / 24} days`}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs text-slate-600 sm:col-span-3">
-          What it&apos;s for (shown on the payment page)
-          <input className="input mt-0.5" value={value.description} onChange={(e) => onChange({ ...value, description: e.target.value })} placeholder="Course fee – October batch" />
-        </label>
-      </div>
-    );
-  } else if (value?.from === "api") {
+  if (value?.from === "api") {
     detail = <p className="py-2 text-xs text-slate-500">Sent in each API call: params[&quot;{label.replace(/.*\{\{(.+)\}\}.*/, "$1")}&quot;]</p>;
   } else {
     const text = value?.from === "text" ? value.value : value?.from === "contact" ? value.fallback : "";
@@ -285,7 +240,6 @@ function ValueSourceRow({
             Custom: {f}
           </option>
         ))}
-        {allowPayment && <option value="payment">₹ Payment link (Razorpay)</option>}
         {kind === "API" && (
           <option value="api" disabled={autoReply}>
             From each API call{autoReply ? " (not with auto-reply)" : ""}
@@ -303,14 +257,7 @@ export function MessagePreview({ template, variables }: { template: Template | n
   return (
     <div className="rounded-lg bg-[#e5ddd5] p-3">
       <div className="rounded-lg bg-white px-3 py-2 text-sm whitespace-pre-wrap shadow-sm">{renderTemplateText(template, variables, SAMPLE)}</div>
-      <p className="mt-2 flex items-center gap-1 text-[11px] text-slate-600">
-        Shown for a sample contact, &ldquo;Asha Sharma&rdquo;.
-        {Object.values(variables.body).some((s) => s.from === "payment") && (
-          <>
-            <IndianRupee size={11} aria-hidden /> Each person gets their own payment link.
-          </>
-        )}
-      </p>
+      <p className="mt-2 text-[11px] text-slate-600">Shown for a sample contact, &ldquo;Asha Sharma&rdquo;.</p>
     </div>
   );
 }

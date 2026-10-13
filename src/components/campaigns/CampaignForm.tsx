@@ -3,14 +3,17 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useFetch } from "@/hooks/useFetch";
 import { api } from "@/lib/api-client";
-import { compactNumber } from "@/lib/format";
+import { classLabel } from "@/lib/format";
+import { type AudienceFilter, DEFAULT_FILTERS } from "@/lib/marketing/audience";
+import type { AudiencePreview } from "@/lib/marketing/audience-query";
 import type { CampaignDTO } from "@/lib/marketing/campaigns";
 import type { SegmentDTO } from "@/lib/marketing/segment-service";
 import { EMPTY_VARIABLES, missingVariables, type Template, type TemplateVariables } from "@/lib/marketing/templates";
 import { ErrorNote } from "../ui/Page";
+import { AudienceBuilder } from "./AudienceBuilder";
 import { defaultVariables, MessagePreview, TemplateSetup } from "./TemplateSetup";
 
 /** Scheduled campaigns start on the next cron run (every 30 min), so we offer :00 / :30 slots. */
@@ -26,14 +29,15 @@ export function CampaignForm() {
   const router = useRouter();
   const templates = useFetch<Template[]>("/api/campaigns/templates");
   const segments = useFetch<SegmentDTO[]>("/api/segments");
-  const fields = useFetch<{ fields: string[] }>("/api/contacts/tags");
+  const contactMeta = useFetch<{ tags: { tag: string; count: number }[]; fields: string[] }>("/api/contacts/tags");
 
   // Time the form was opened (render must stay pure; the server re-checks the schedule anyway).
   const [openedAt] = useState(() => Date.now());
   const [name, setName] = useState("");
   const [templateKey, setTemplateKey] = useState("");
   const [variables, setVariables] = useState<TemplateVariables>(EMPTY_VARIABLES);
-  const [segmentId, setSegmentId] = useState("");
+  const [filters, setFilters] = useState<AudienceFilter[]>(DEFAULT_FILTERS);
+  const [permission, setPermission] = useState(false);
   const [timing, setTiming] = useState<"now" | "later">("now");
   const [date, setDate] = useState(() => todayISO(openedAt));
   const [slot, setSlot] = useState("10:00");
@@ -53,17 +57,40 @@ export function CampaignForm() {
     }
   }
 
-  const audience = useFetch<{ size: number }>(`/api/campaigns/audience${segmentId ? `?segmentId=${segmentId}` : ""}`);
+  // Who matches right now (debounced while you edit the filters).
+  const filtersKey = JSON.stringify(filters);
+  const [audience, setAudience] = useState<{ key: string; data: AudiencePreview | null; error: string | null } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const data = await api.post<AudiencePreview>("/api/campaigns/audience", { filters: JSON.parse(filtersKey) });
+        if (!cancelled) setAudience({ key: filtersKey, data, error: null });
+      } catch (err) {
+        if (!cancelled) setAudience({ key: filtersKey, data: null, error: err instanceof Error ? err.message : "Couldn't count the audience" });
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [filtersKey]);
+  const counted = audience?.key === filtersKey ? audience : null;
+
   const template = templates.data?.find((t) => `${t.name}|${t.language}` === templateKey) ?? null;
   const scheduledAt = timing === "later" ? new Date(`${date}T${slot}:00`) : null;
   const missing = useMemo(() => (template ? missingVariables(template, variables) : []), [template, variables]);
-  const size = audience.data?.size;
+  const size = counted?.data?.size;
+  const notOptedIn = counted?.data?.notOptedIn ?? 0;
   const problems = [
     !name.trim() && "Give the campaign a name",
     !template && "Pick a template",
     ...missing.map((m) => `Fill in ${m}`),
     scheduledAt && scheduledAt.getTime() < openedAt && "The scheduled time is in the past",
-    size === 0 && "Nobody in this audience has opted in yet",
+    counted?.error,
+    size === undefined && !counted?.error && "Counting the audience…",
+    size === 0 && "No contacts match this audience",
+    notOptedIn > 0 && !permission && "Confirm you have permission to message the contacts who haven't opted in",
   ].filter(Boolean) as string[];
 
   async function submit() {
@@ -76,7 +103,7 @@ export function CampaignForm() {
         templateName: template!.name,
         templateLanguage: template!.language,
         variables,
-        segmentId: segmentId || null,
+        audience: { filters },
         scheduledAt: scheduledAt?.toISOString() ?? null,
       });
       router.push(`/campaigns/${campaign.id}`);
@@ -99,7 +126,7 @@ export function CampaignForm() {
             kind="BROADCAST"
             templates={templates.data}
             templatesError={templates.error}
-            fields={fields.data?.fields ?? []}
+            fields={contactMeta.data?.fields ?? []}
             templateKey={templateKey}
             onTemplate={(key) => {
               setTemplateKey(key);
@@ -109,23 +136,40 @@ export function CampaignForm() {
             onVariables={setVariables}
           />
 
-          <Field title="Audience" help="Recounted when the campaign starts; anyone who opts out meanwhile is skipped.">
-            <select
-              className="input"
-              value={segmentId}
-              onChange={(e) => {
-                setSegmentId(e.target.value);
+          <Field title="Select Audience" help="Contacts matching every filter. Recounted when the campaign starts; anyone who opts out or is blocked meanwhile is skipped.">
+            <AudienceBuilder
+              filters={filters}
+              onChange={(f) => {
+                setFilters(f);
                 setConfirming(false);
               }}
-            >
-              <option value="">All opted-in contacts</option>
-              {segments.data?.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({compactNumber(s.size)})
-                </option>
-              ))}
-            </select>
-            <p className="mt-1.5 text-sm">{size === undefined ? "Counting…" : <><b>{size.toLocaleString()}</b> opted-in contact{size === 1 ? "" : "s"} right now.</>}</p>
+              tags={contactMeta.data?.tags ?? []}
+              fields={contactMeta.data?.fields ?? []}
+              segments={segments.data ?? []}
+            />
+            <p className="mt-2 text-sm" aria-live="polite">
+              Number of contacts:{" "}
+              {counted?.error ? (
+                <span className="text-red-600">{counted.error}</span>
+              ) : size === undefined ? (
+                <span className="text-slate-400">counting…</span>
+              ) : (
+                <b>{size.toLocaleString()}</b>
+              )}
+            </p>
+            {notOptedIn > 0 && (
+              <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <p>
+                  <b>{notOptedIn.toLocaleString()}</b> of them haven&apos;t opted in. WhatsApp requires people&apos;s permission before you message
+                  them; messaging people who didn&apos;t agree can lower your quality rating or get your number restricted.
+                </p>
+                <label className="mt-2 flex items-start gap-2">
+                  <input type="checkbox" className="mt-0.5" checked={permission} onChange={(e) => setPermission(e.target.checked)} />
+                  They gave us permission to message them on WhatsApp (for example on an admission or enquiry form).
+                </label>
+              </div>
+            )}
+            {counted?.data && counted.data.sample.length > 0 && <AudienceTable preview={counted.data} />}
           </Field>
 
           <Field title="When" help="Send now, or schedule it.">
@@ -187,6 +231,43 @@ export function CampaignForm() {
         </aside>
       </div>
     </FormShell>
+  );
+}
+
+/** The newest few matching contacts, so you can sanity-check the filters. */
+function AudienceTable({ preview }: { preview: AudiencePreview }) {
+  return (
+    <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+      <table className="w-full text-left text-sm">
+        <thead className="bg-slate-50 text-xs text-slate-500">
+          <tr>
+            <th className="px-3 py-2 font-medium">Name</th>
+            <th className="px-3 py-2 font-medium">Mobile number</th>
+            <th className="px-3 py-2 font-medium">School</th>
+            <th className="px-3 py-2 font-medium">Class</th>
+            <th className="px-3 py-2 font-medium">Tags</th>
+            <th className="px-3 py-2 font-medium">Opted in</th>
+          </tr>
+        </thead>
+        <tbody>
+          {preview.sample.map((c) => (
+            <tr key={c.id} className="border-t border-slate-100">
+              <td className="px-3 py-1.5">{c.name || <span className="text-slate-400">No name</span>}</td>
+              <td className="px-3 py-1.5 tabular-nums">{c.phone}</td>
+              <td className="px-3 py-1.5">{c.attributes.school ? String(c.attributes.school) : <span className="text-slate-300">—</span>}</td>
+              <td className="px-3 py-1.5">{classLabel(c.attributes.class) ?? <span className="text-slate-300">—</span>}</td>
+              <td className="px-3 py-1.5 text-xs text-slate-600">{c.tags.join(", ")}</td>
+              <td className="px-3 py-1.5 text-xs">{c.optInStatus === "OPTED_IN" ? "Yes" : <span className="text-amber-700">No</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {preview.size > preview.sample.length && (
+        <p className="border-t border-slate-100 px-3 py-1.5 text-xs text-slate-500">
+          Showing the {preview.sample.length} newest of {preview.size.toLocaleString()}.
+        </p>
+      )}
+    </div>
   );
 }
 

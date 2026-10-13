@@ -2,8 +2,9 @@ import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 
 // A segment is a saved set of rules. Rules are evaluated when a campaign starts, so contacts
-// who match later are included. Every audience is ALWAYS limited to opted-in contacts with a
-// WhatsApp number — a segment can narrow that down, never widen it.
+// who match later are included. A segment is ALWAYS limited to opted-in, unblocked contacts
+// with a WhatsApp number — its rules can narrow that down, never widen it.
+// (Broadcast audiences use these rules through ./audience-query.ts.)
 
 export const segmentRulesSchema = z.object({
   /** Has at least one of these tags. */
@@ -30,8 +31,8 @@ export const EMPTY_RULES: SegmentRules = segmentRulesSchema.parse({});
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Everyone a campaign may message: opted in, with a WhatsApp number. */
-export const REACHABLE: Prisma.ContactWhereInput = { optInStatus: "OPTED_IN", waId: { not: null } };
+/** Everyone a campaign may message: opted in, not blocked, with a WhatsApp number. */
+export const REACHABLE: Prisma.ContactWhereInput = { optInStatus: "OPTED_IN", blocked: false, waId: { not: null } };
 
 /** Rules → Prisma filter (always within REACHABLE). */
 export function segmentWhere(rules: SegmentRules, now = Date.now()): Prisma.ContactWhereInput {

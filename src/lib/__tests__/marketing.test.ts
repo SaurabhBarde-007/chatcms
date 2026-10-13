@@ -75,7 +75,7 @@ describe("segments", () => {
 
   it("always limits to reachable contacts", () => {
     expect(segmentWhere(segmentRulesSchema.parse({}), now)).toEqual({
-      AND: [{ optInStatus: "OPTED_IN", waId: { not: null } }],
+      AND: [{ optInStatus: "OPTED_IN", blocked: false, waId: { not: null } }],
     });
   });
 
@@ -88,7 +88,7 @@ describe("segments", () => {
     });
     expect(segmentWhere(rules, now)).toEqual({
       AND: [
-        { optInStatus: "OPTED_IN", waId: { not: null } },
+        { optInStatus: "OPTED_IN", blocked: false, waId: { not: null } },
         { tags: { hasSome: ["vip"] } },
         { NOT: { tags: { hasSome: ["churned"] } } },
         { conversations: { some: { channel: "WHATSAPP", lastInboundAt: { gte: new Date("2026-09-09T00:00:00Z") } } } },

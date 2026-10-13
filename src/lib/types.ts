@@ -15,6 +15,8 @@ export type ContactDTO = {
   tags: string[];
   /** Custom fields, incl. "school" and "class". */
   attributes: Record<string, unknown>;
+  /** Blocked by you: no replies, campaigns or auto-replies. */
+  blocked: boolean;
 };
 
 export type ConversationSummaryDTO = {

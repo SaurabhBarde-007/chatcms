@@ -66,12 +66,14 @@ model Contact {
   optInSource        String? // csv | manual | api | keyword
   optInAt            DateTime?
   optOutAt           DateTime?
+  // Blocked by you: never messaged (campaigns, auto-replies or replies) until unblocked.
+  blocked            Boolean             @default(false)
+  blockedAt          DateTime?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   conversations      Conversation[]
   consentEvents      ConsentEvent[]
   campaignRecipients CampaignRecipient[]
-  paymentRequests    PaymentRequest[]
 
   @@index([optInStatus])
 }
@@ -182,6 +184,8 @@ model Campaign {
   variables        Json
   segmentId        String?
   segment          Segment?            @relation(fields: [segmentId], references: [id], onDelete: SetNull)
+  // Broadcasts: who gets it, as filters (see src/lib/marketing/audience.ts). Older campaigns use segmentId.
+  audience         Json?
   audienceSize     Int?
   scheduledAt      DateTime?
   startedAt        DateTime?
@@ -190,7 +194,6 @@ model Campaign {
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
   recipients       CampaignRecipient[]
-  paymentRequests  PaymentRequest[]
 
   @@index([status, scheduledAt])
   @@index([type, status])
@@ -208,77 +211,34 @@ enum RecipientStatus {
 
 // One contact in one campaign. The timestamps drive the engagement funnel.
 model CampaignRecipient {
-  id             String          @id @default(cuid())
-  campaignId     String
-  campaign       Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contactId      String
-  contact        Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  status         RecipientStatus @default(PENDING)
-  messageId      String?         @unique
-  message        Message?        @relation(fields: [messageId], references: [id], onDelete: SetNull)
-  error          String?
-  errorCode      Int?
-  claimedAt      DateTime? // when a sender picked it up (to recover from crashes)
-  sentAt         DateTime?
-  deliveredAt    DateTime?
-  readAt         DateTime?
-  failedAt       DateTime?
-  repliedAt      DateTime?
-  buttonAt       DateTime? // tapped a quick-reply button
-  buttonText     String?
-  optedOutAt     DateTime? // opted out in reply to this campaign
+  id          String          @id @default(cuid())
+  campaignId  String
+  campaign    Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId   String
+  contact     Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  status      RecipientStatus @default(PENDING)
+  messageId   String?         @unique
+  message     Message?        @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  error       String?
+  errorCode   Int?
+  claimedAt   DateTime? // when a sender picked it up (to recover from crashes)
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  failedAt    DateTime?
+  repliedAt   DateTime?
+  buttonAt    DateTime? // tapped a quick-reply button
+  buttonText  String?
+  optedOutAt  DateTime? // opted out in reply to this campaign
   // API campaigns: placeholder values given for this one send, and what triggered it.
-  params         Json?
-  source         String? // incoming | api
-  createdAt      DateTime        @default(now())
-  paymentRequest PaymentRequest?
+  params      Json?
+  source      String? // incoming | api
+  createdAt   DateTime        @default(now())
 
   // Broadcasts have one row per contact; API campaigns one per send (a contact can get it again).
   @@index([campaignId, contactId])
   @@index([campaignId, status])
   @@index([contactId, sentAt])
-}
-
-// ---------------------------------------------------------------------------
-// Payments: collect money from customers with payment links (Razorpay)
-// ---------------------------------------------------------------------------
-
-enum PaymentStatus {
-  CREATED // link created, not paid yet
-  PARTIALLY_PAID
-  PAID
-  EXPIRED
-  CANCELLED
-}
-
-model PaymentRequest {
-  id                  String             @id @default(cuid())
-  contactId           String
-  contact             Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  // Set when the link went out in a campaign.
-  campaignId          String?
-  campaign            Campaign?          @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  campaignRecipientId String?            @unique
-  campaignRecipient   CampaignRecipient? @relation(fields: [campaignRecipientId], references: [id], onDelete: SetNull)
-  amount              Int // in the currency's smallest unit (paise)
-  amountPaid          Int                @default(0)
-  currency            String             @default("INR")
-  description         String
-  status              PaymentStatus      @default(CREATED)
-  provider            String             @default("razorpay")
-  providerLinkId      String?            @unique // plink_…
-  providerPaymentId   String?
-  paymentMethod       String? // upi | card | netbanking | …
-  shortUrl            String?
-  sentVia             String? // chat | campaign | manual
-  expiresAt           DateTime?
-  paidAt              DateTime?
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
-
-  @@index([status, createdAt])
-  @@index([campaignId])
-  @@index([contactId])
 }
 
 // ---------------------------------------------------------------------------

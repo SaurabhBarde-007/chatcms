@@ -1,6 +1,5 @@
 import { type NextRequest } from "next/server";
 import { allRecipients, getCampaign, type Stage, STAGES, toCsv } from "@/lib/marketing/campaigns";
-import { formatMoney } from "@/lib/payments/money";
 
 // GET /api/campaigns/:id/report?stage= → recipients as CSV ("User report")
 export async function GET(req: NextRequest, ctx: RouteContext<"/api/campaigns/[id]/report">) {
@@ -12,10 +11,9 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/campaigns/[i
 
   const rows = await allRecipients(id, stage);
   const csv = toCsv([
-    ["Name", "Phone", "Status", "Source", "Sent at", "Delivered at", "Read at", "Replied at", "Button tapped", "Payment", "Paid", "Error"],
+    ["Name", "Phone", "Status", "Source", "Sent at", "Delivered at", "Read at", "Replied at", "Button tapped", "Error"],
     ...rows.map((r) => [
-      r.name, r.phone, r.status, r.source, r.sentAt, r.deliveredAt, r.readAt, r.repliedAt, r.buttonText,
-      r.payment ? r.payment.status : "", r.payment?.amountPaid ? formatMoney(r.payment.amountPaid) : "", r.error,
+      r.name, r.phone, r.status, r.source, r.sentAt, r.deliveredAt, r.readAt, r.repliedAt, r.buttonText, r.error,
     ]),
   ]);
   const file = `${campaign.name.replace(/[^\w-]+/g, "_")}_${stage}.csv`;
