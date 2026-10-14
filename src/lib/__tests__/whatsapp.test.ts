@@ -94,8 +94,8 @@ describe("parseWhatsAppWebhook", () => {
   });
 
   it("ignores junk payloads", () => {
-    expect(parseWhatsAppWebhook({})).toEqual({ messages: [], statuses: [] });
-    expect(parseWhatsAppWebhook(null)).toEqual({ messages: [], statuses: [] });
+    expect(parseWhatsAppWebhook({})).toEqual({ messages: [], statuses: [], preferences: [] });
+    expect(parseWhatsAppWebhook(null)).toEqual({ messages: [], statuses: [], preferences: [] });
   });
 });
 

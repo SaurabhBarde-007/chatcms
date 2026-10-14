@@ -171,7 +171,7 @@ docs/API.md                     API campaigns: send templates (e.g. OTPs) from y
 4. Under **WhatsApp > Configuration > Webhook**:
    - Callback URL: `https://<your-domain>/api/webhooks/whatsapp`
    - Verify token: the same value as `WA_VERIFY_TOKEN`
-   - Subscribe to the **messages** field.
+   - Subscribe to the **messages** field, and to **user_preferences** (people stopping or resuming your marketing messages inside WhatsApp; Meta is still rolling this field out, so it may not be listed yet).
 
    For local testing, expose your machine with `ngrok http 3000` and use the ngrok URL.
 5. Send a WhatsApp message to your business number. It appears in the inbox instantly.
@@ -268,7 +268,13 @@ Switch an API campaign on and off with **Pause / Go live**. Every send shows up 
 - **Broadcasts go to opted-in contacts** unless you remove the "Opted in is Yes" filter and confirm you have their permission. People who opted out are never included. Consent is checked again right before each send, so anyone who opts out (or is blocked) after a campaign is scheduled is skipped.
 - **Blocked contacts never get anything:** no broadcasts, API campaigns, auto-replies or replies. Block someone from the Contacts page or the inbox's side panel; their messages still arrive in the inbox.
 - **API campaigns** (replies and one-off sends) go to anyone with a WhatsApp number, except that **marketing** templates still skip people who opted out.
-- **Opt-outs are automatic:** a reply of STOP, UNSUBSCRIBE or "Stop promotions" (e.g. a quick-reply button), or WhatsApp error 131050 (the person blocked your marketing), opts them out. A CSV import can't re-subscribe them; only they can, through you, the dashboard or the opt-in API.
+- **Opt-outs are automatic.** The contact page shows why someone was opted out:
+  - **Replied STOP**: a reply of STOP, STOP ALL, UNSUBSCRIBE, OPT OUT, REMOVE ME or "Stop promotions" (e.g. a quick-reply button).
+  - **Stopped marketing in WhatsApp**: they tapped "Stop" on your marketing messages in WhatsApp (the `user_preferences` webhook), or a message failed with error 131050. If they tap "Resume" later, they're opted back in.
+
+  Undeliverable messages (error 131026: they blocked your number, aren't on WhatsApp, or use an outdated app; Meta doesn't say which) are marked failed but don't change anyone's consent.
+
+  A CSV import can't re-subscribe anyone who opted out; only they can, through you, the dashboard or the opt-in API.
 - **"Send now"** starts right away. **Scheduled** campaigns start on the next scheduler run after their time. The GitHub workflow runs every 30 minutes, so allow up to about 30–45 minutes.
 - **Big campaigns** send about 25 messages per batch, 8 at a time. Each run works for up to 4 minutes, then hands over to a fresh request, so the cron isn't needed to finish.
 - **No duplicates:** each recipient is locked while being sent. If it's unclear whether WhatsApp accepted a message (network error, crash), it's marked failed, not retried.

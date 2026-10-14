@@ -1,7 +1,7 @@
 import type { Channel, ConversationStatus, Message } from "@/generated/prisma/client";
 import { getAdapter } from "./channels";
 import type { OutgoingMessage } from "./channels/types";
-import type { WhatsAppStatusUpdate } from "./channels/whatsapp";
+import { type WhatsAppStatusUpdate, WhatsAppApiError } from "./channels/whatsapp";
 import { db } from "./db";
 import { UserError } from "./errors";
 import { isStatusAdvance } from "./message-status";
@@ -9,6 +9,7 @@ import { toMessageDTO, toSummaryDTO } from "./dto";
 import { ENABLED_CHANNELS } from "./enabled-channels";
 import { previewText } from "./ingest";
 import { onCampaignStatus } from "./marketing/campaign-status";
+import { optOutForDeliveryError } from "./marketing/consent";
 import { publish } from "./realtime/publish";
 import type { ConversationDetailDTO, ConversationSummaryDTO, MessageDTO } from "./types";
 import { isWindowOpen } from "./whatsapp-window";
@@ -141,6 +142,7 @@ export async function sendReply(conversationId: string, outgoing: OutgoingMessag
       where: { id: pending.id },
       data: { status: "FAILED", error: err instanceof Error ? err.message : String(err) },
     });
+    if (err instanceof WhatsAppApiError) await optOutForDeliveryError(conversation.contactId, err.code);
   }
   await publish({ kind: "message", id: saved.id });
 
@@ -176,7 +178,10 @@ export async function setStatus(id: string, status: ConversationStatus) {
 // ---------------------------------------------------------------------------
 
 export async function applyStatusUpdate(update: WhatsAppStatusUpdate) {
-  const message = await db.message.findUnique({ where: { externalId: update.externalId } });
+  const message = await db.message.findUnique({
+    where: { externalId: update.externalId },
+    include: { conversation: { select: { contactId: true } } },
+  });
   if (!message) return; // e.g. a message sent from outside this app
 
   // Webhooks can arrive out of order; never move backwards (read → delivered).
@@ -186,6 +191,8 @@ export async function applyStatusUpdate(update: WhatsAppStatusUpdate) {
     where: { id: message.id },
     data: { status: update.status, error: update.error ?? null },
   });
+  // They stopped our marketing messages in WhatsApp (error 131050): opt them out.
+  if (update.status === "FAILED") await optOutForDeliveryError(message.conversation.contactId, update.errorCode, update.timestamp);
 
   if (message.senderType === "CAMPAIGN") {
     // Campaign ticks feed the campaign's analytics. They aren't pushed live to the inbox:

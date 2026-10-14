@@ -1,4 +1,4 @@
-import type { ChannelName, ContactDTO } from "./types";
+import type { ChannelName, ContactDTO, OptInStatusName } from "./types";
 
 export const CHANNEL_LABEL: Record<ChannelName, string> = {
   WEB_BOT: "Chatbot",
@@ -15,6 +15,29 @@ export function classLabel(value: unknown): string | null {
   const v = value === null || value === undefined ? "" : String(value).trim();
   if (!v) return null;
   return /^(class|grade|std|standard)\b/i.test(v) ? v : `Class ${v}`;
+}
+
+/** Why a contact is opted in / out (their consent source), in words. */
+export function consentSourceLabel(source: string | null | undefined, status?: OptInStatusName): string | null {
+  switch (source) {
+    case undefined:
+    case null:
+      return null;
+    case "csv":
+      return "CSV import";
+    case "manual":
+      return "Set in the dashboard";
+    case "api":
+      return "Website / opt-in API";
+    case "keyword":
+      return "Replied STOP";
+    case "whatsapp":
+      return status === "OPTED_IN" ? "Resumed marketing in WhatsApp" : "Stopped marketing in WhatsApp";
+    case "unknown":
+      return "Unknown";
+    default:
+      return source;
+  }
 }
 
 /** 12.5 → "₹12.50", 300 → "₹300" (e.g. estimated WhatsApp costs). */

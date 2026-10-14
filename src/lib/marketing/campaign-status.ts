@@ -1,9 +1,5 @@
 import type { WhatsAppStatusUpdate } from "../channels/whatsapp";
 import { db } from "../db";
-import { setConsent } from "./consent";
-
-// WhatsApp's error when someone has turned off marketing messages from your business.
-const USER_STOPPED_MARKETING = 131050;
 
 /** A delivery status for a campaign message → the recipient's funnel timestamps. */
 export async function onCampaignStatus(messageId: string, update: WhatsAppStatusUpdate) {
@@ -27,8 +23,6 @@ export async function onCampaignStatus(messageId: string, update: WhatsAppStatus
       where: { id: recipient.id },
       data: { status: "FAILED", failedAt: at, error: update.error ?? "Failed", errorCode: update.errorCode ?? null },
     });
-    if (update.errorCode === USER_STOPPED_MARKETING) {
-      await setConsent(recipient.contactId, "OPTED_OUT", "whatsapp", db, at);
-    }
+    // Opting out on errors like 131050 / 131026 happens for every message, in applyStatusUpdate.
   }
 }

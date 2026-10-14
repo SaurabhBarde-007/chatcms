@@ -12,6 +12,8 @@ export type ContactDTO = {
   phone: string | null;
   email: string | null;
   optInStatus: OptInStatusName;
+  /** Why they're opted in / out: manual | api | csv | keyword | whatsapp */
+  optInSource: string | null;
   tags: string[];
   /** Custom fields, incl. "school" and "class". */
   attributes: Record<string, unknown>;

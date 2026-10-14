@@ -4,6 +4,7 @@ import { applyStatusUpdate } from "@/lib/conversations";
 import { env } from "@/lib/env";
 import { saveInboundMessage } from "@/lib/ingest";
 import { sendApiRecipient } from "@/lib/marketing/campaign-runner";
+import { applyMarketingPreference } from "@/lib/marketing/consent";
 import { isValidSignature } from "@/lib/signatures";
 
 // Webhook URL to configure in Meta: https://<your-domain>/api/webhooks/whatsapp
@@ -19,7 +20,7 @@ export async function GET(req: NextRequest) {
   return new NextResponse("Forbidden", { status: 403 });
 }
 
-/** Incoming messages and delivery statuses. */
+/** Incoming messages, delivery statuses, and marketing preferences (subscribe to "messages" and "user_preferences"). */
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
 
@@ -36,8 +37,10 @@ export async function POST(req: NextRequest) {
     return new NextResponse("Body must be JSON", { status: 400 });
   }
 
-  const { messages, statuses } = parseWhatsAppWebhook(payload);
-  console.log(`[whatsapp] webhook received: ${messages.length} message(s), ${statuses.length} status update(s)`);
+  const { messages, statuses, preferences } = parseWhatsAppWebhook(payload);
+  console.log(
+    `[whatsapp] webhook received: ${messages.length} message(s), ${statuses.length} status update(s), ${preferences.length} marketing preference(s)`,
+  );
 
   // Errors are logged, not returned: a non-200 makes Meta resend the whole batch.
   const autoReplies: string[] = [];
@@ -50,6 +53,11 @@ export async function POST(req: NextRequest) {
   }
   for (const status of statuses) {
     await applyStatusUpdate(status).catch((err) => console.error("[whatsapp] status failed:", err));
+  }
+  for (const pref of preferences) {
+    await applyMarketingPreference({ waId: pref.waId, value: pref.value, at: pref.timestamp }).catch((err) =>
+      console.error("[whatsapp] marketing preference failed:", err),
+    );
   }
 
   // API-campaign auto-replies go out right after we've answered Meta.

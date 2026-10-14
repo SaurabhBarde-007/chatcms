@@ -18,6 +18,7 @@ export function toSummaryDTO(c: ConversationWithContact): ConversationSummaryDTO
       phone: c.contact.phone,
       email: c.contact.email,
       optInStatus: c.contact.optInStatus,
+      optInSource: c.contact.optInSource,
       tags: c.contact.tags,
       attributes: (c.contact.attributes ?? {}) as Record<string, unknown>,
       blocked: c.contact.blocked,

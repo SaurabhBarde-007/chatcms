@@ -84,7 +84,7 @@ model ConsentEvent {
   contactId String
   contact   Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
   status    OptInStatus // OPTED_IN or OPTED_OUT
-  source    String // csv | manual | api | keyword
+  source    String // csv | manual | api | keyword | whatsapp (see src/lib/marketing/consent.ts)
   createdAt DateTime    @default(now())
 
   @@index([createdAt])

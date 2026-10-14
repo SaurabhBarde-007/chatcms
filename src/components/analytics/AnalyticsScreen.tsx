@@ -3,22 +3,13 @@
 import Link from "next/link";
 import { useState, useSyncExternalStore } from "react";
 import { useFetch } from "@/hooks/useFetch";
-import { compactNumber, formatMinutes, percent } from "@/lib/format";
+import { compactNumber, consentSourceLabel, formatMinutes, percent } from "@/lib/format";
 import type { AnalyticsDTO } from "@/lib/marketing/analytics";
 import { CampaignStatusBadge } from "../campaigns/CampaignStatusBadge";
 import { DailyColumns } from "../charts/DailyColumns";
 import { Card, ErrorNote, Page, Stat } from "../ui/Page";
 
 const RANGES = [7, 30, 90];
-const SOURCE_LABEL: Record<string, string> = {
-  csv: "CSV import",
-  manual: "Added manually",
-  api: "Website / opt-in API",
-  keyword: "Keyword",
-  whatsapp: "WhatsApp",
-  unknown: "Unknown",
-};
-
 const noSubscribe = () => () => {};
 
 export function AnalyticsScreen() {
@@ -169,7 +160,7 @@ function AudienceSection({ data }: { data: AnalyticsDTO }) {
               {a.sources.map((s) => (
                 <li key={s.source}>
                   <div className="flex justify-between gap-2">
-                    <span>{SOURCE_LABEL[s.source] ?? s.source}</span>
+                    <span>{consentSourceLabel(s.source, "OPTED_IN")}</span>
                     <span className="tabular-nums">
                       {s.count.toLocaleString()} <span className="text-slate-400">{percent(s.count, sourceTotal)}</span>
                     </span>

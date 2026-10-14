@@ -173,13 +173,18 @@ export type WhatsAppStatusUpdate = {
 
 const STATUS_VALUES = ["SENT", "DELIVERED", "READ", "FAILED"] as const;
 
+/** They stopped or resumed your marketing messages inside WhatsApp ("user_preferences" webhook field). */
+export type MarketingPreference = { waId: string; value: "stop" | "resume"; timestamp?: Date };
+
 /* eslint-disable @typescript-eslint/no-explicit-any -- webhook JSON is loosely typed */
 export function parseWhatsAppWebhook(payload: any): {
   messages: InboundMessage[];
   statuses: WhatsAppStatusUpdate[];
+  preferences: MarketingPreference[];
 } {
   const messages: InboundMessage[] = [];
   const statuses: WhatsAppStatusUpdate[] = [];
+  const preferences: MarketingPreference[] = [];
 
   for (const entry of payload?.entry ?? []) {
     for (const change of entry?.changes ?? []) {
@@ -218,10 +223,16 @@ export function parseWhatsAppWebhook(payload: any): {
           timestamp: s.timestamp ? new Date(Number(s.timestamp) * 1000) : undefined,
         });
       }
+
+      for (const p of value.user_preferences ?? []) {
+        const pref = String(p.value).toLowerCase();
+        if (p.category !== "marketing_messages" || !p.wa_id || (pref !== "stop" && pref !== "resume")) continue;
+        preferences.push({ waId: String(p.wa_id), value: pref, timestamp: p.timestamp ? new Date(Number(p.timestamp) * 1000) : undefined });
+      }
     }
   }
 
-  return { messages, statuses };
+  return { messages, statuses, preferences };
 }
 
 /** Turn one WhatsApp message object into type/body/media fields. */

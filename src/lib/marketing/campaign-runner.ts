@@ -4,6 +4,7 @@ import { db } from "../db";
 import { env } from "../env";
 import { parseAudience, requiresOptIn } from "./audience";
 import { audienceCondition, audiencePage } from "./audience-query";
+import { optOutForDeliveryError } from "./consent";
 import { REACHABLE, segmentRulesSchema, segmentWhere } from "./segments";
 import {
   buildTemplateComponents,
@@ -336,6 +337,7 @@ async function sendToRecipient(
         data: { status: "FAILED", failedAt: now, error: error.message, errorCode: error.code ?? null },
       }),
     ]);
+    await optOutForDeliveryError(contact.id, error.code, now);
     return { kind: error.kind === "fatal" ? "fatal" : "failed", code: error.code, message: error.message };
   }
 }

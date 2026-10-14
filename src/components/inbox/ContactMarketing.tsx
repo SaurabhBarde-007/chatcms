@@ -3,12 +3,16 @@
 import Link from "next/link";
 import { useState } from "react";
 import { api } from "@/lib/api-client";
+import { consentSourceLabel } from "@/lib/format";
 import type { ContactDTO, OptInStatusName } from "@/lib/types";
 import { OptInBadge } from "../contacts/OptInBadge";
 
 /** Marketing consent, tags and blocking for the contact you're chatting with. */
 export function ContactMarketing({ contact }: { contact: ContactDTO }) {
-  const [status, setStatus] = useState<OptInStatusName>(contact.optInStatus);
+  // A change made here shows at once; otherwise the contact's live state (STOP replies, blocks…).
+  const [manual, setManual] = useState<OptInStatusName | null>(null);
+  const status = manual ?? contact.optInStatus;
+  const reason = consentSourceLabel(manual ? "manual" : contact.optInSource, status);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,7 +36,7 @@ export function ContactMarketing({ contact }: { contact: ContactDTO }) {
     setError(null);
     try {
       await api.patch(`/api/contacts/${contact.id}`, { optInStatus: next });
-      setStatus(next);
+      setManual(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update");
     } finally {
@@ -53,6 +57,7 @@ export function ContactMarketing({ contact }: { contact: ContactDTO }) {
           {status === "OPTED_IN" ? "Opt out" : "Opt in"}
         </button>
       </div>
+      {reason && <p className="mt-1 text-[11px] text-slate-400">{reason}</p>}
       {contact.tags.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
           {contact.tags.map((t) => (

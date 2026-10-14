@@ -4,7 +4,7 @@ import { Plus } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useFetch } from "@/hooks/useFetch";
 import { api } from "@/lib/api-client";
-import { classLabel, compactNumber, relativeTime } from "@/lib/format";
+import { classLabel, compactNumber, consentSourceLabel, relativeTime } from "@/lib/format";
 import type { ContactRowDTO } from "@/lib/marketing/contacts";
 import type { OptInStatusName } from "@/lib/types";
 import { Card, ErrorNote, Page } from "../ui/Page";
@@ -322,7 +322,7 @@ function ContactRow({
             </button>
           )}
         </div>
-        {c.optInSource && <div className="mt-0.5 text-[11px] text-slate-400">via {c.optInSource}</div>}
+        {c.optInSource && <div className="mt-0.5 text-[11px] text-slate-400">{consentSourceLabel(c.optInSource, c.optInStatus)}</div>}
         <button className="mt-1 text-[11px] text-slate-500 underline hover:text-slate-800" disabled={busy} onClick={toggleBlock}>
           {c.blocked ? "Unblock" : "Block"}
         </button>

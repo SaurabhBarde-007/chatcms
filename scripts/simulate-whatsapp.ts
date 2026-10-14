@@ -5,6 +5,10 @@
 //   npm run test:whatsapp -- "Hello" 919811112222 "Asha"            message from another number/name
 //   npm run test:whatsapp -- --status read <wamid>                  delivery tick for a message you sent
 //                                                                    (sent | delivered | read | failed)
+//   npm run test:whatsapp -- --status failed <wamid> 131050         failed with a specific error code
+//                                                                    (default 131026 "message undeliverable")
+//   npm run test:whatsapp -- --preference stop 919811112222         they stopped (or resumed) your
+//                                                                    marketing messages in WhatsApp
 //
 // Needs `npm run dev` running and WA_APP_SECRET in .env (any value works locally).
 import crypto from "node:crypto";
@@ -22,9 +26,34 @@ function webhook(value: object) {
 }
 
 function buildPayload() {
+  if (args[0] === "--preference") {
+    const [, value = "stop", waId = "919800000001"] = args;
+    if (value !== "stop" && value !== "resume") throw new Error("Usage: npm run test:whatsapp -- --preference <stop|resume> <phone>");
+    return {
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "TEST_WABA",
+          changes: [
+            {
+              field: "user_preferences",
+              value: {
+                messaging_product: "whatsapp",
+                contacts: [{ wa_id: waId }],
+                user_preferences: [
+                  { wa_id: waId, detail: `User requested to ${value} marketing messages`, category: "marketing_messages", value, timestamp: Number(now) },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+  }
+
   if (args[0] === "--status") {
-    const [, status = "read", wamid] = args;
-    if (!wamid) throw new Error("Usage: npm run test:whatsapp -- --status <sent|delivered|read|failed> <wamid>");
+    const [, status = "read", wamid, code = "131026"] = args;
+    if (!wamid) throw new Error("Usage: npm run test:whatsapp -- --status <sent|delivered|read|failed> <wamid> [error code]");
     return webhook({
       statuses: [
         {
@@ -32,7 +61,7 @@ function buildPayload() {
           status,
           timestamp: now,
           recipient_id: "919800000001",
-          ...(status === "failed" && { errors: [{ code: 131026, title: "Message undeliverable" }] }),
+          ...(status === "failed" && { errors: [{ code: Number(code), title: code === "131050" ? "User stopped marketing messages" : "Message undeliverable" }] }),
         },
       ],
     });
