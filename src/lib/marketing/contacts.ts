@@ -253,6 +253,24 @@ export async function updateContact(
   await Promise.all(contact.conversations.map((c) => publish({ kind: "conversation", id: c.id })));
 }
 
+/**
+ * Delete a contact with their chats, messages, consent history and campaign records.
+ * Campaigns keep their other recipients. If they message you again they come back as a new contact.
+ */
+export async function deleteContact(id: string) {
+  const contact = await db.contact.findUnique({ where: { id }, select: { id: true } });
+  if (!contact) throw new ContactError("Contact not found");
+  // The sender would trip over a recipient that vanished mid-send.
+  const sending = await db.campaignRecipient.count({ where: { contactId: id, status: "SENDING" } });
+  if (sending) throw new ContactError("A campaign is sending to this contact right now. Try again in a minute.");
+
+  await db.$transaction([
+    // Messages go with their conversations; consent events and campaign records go with the contact.
+    db.conversation.deleteMany({ where: { contactId: id } }),
+    db.contact.delete({ where: { id } }),
+  ]);
+}
+
 // ---------------------------------------------------------------------------
 // Opt-in API (your website / forms)
 // ---------------------------------------------------------------------------

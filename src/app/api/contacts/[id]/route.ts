@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { errorResponse } from "@/lib/errors";
-import { updateContact } from "@/lib/marketing/contacts";
+import { deleteContact, updateContact } from "@/lib/marketing/contacts";
 
 const patchSchema = z.object({
   name: z.string().max(200).nullable().optional(),
@@ -20,6 +20,17 @@ export async function PATCH(req: NextRequest, ctx: RouteContext<"/api/contacts/[
   const { id } = await ctx.params;
   try {
     await updateContact(id, parsed.data);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+// DELETE /api/contacts/:id → removes the contact, their chats and their campaign records
+export async function DELETE(_req: NextRequest, ctx: RouteContext<"/api/contacts/[id]">) {
+  const { id } = await ctx.params;
+  try {
+    await deleteContact(id);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return errorResponse(err);

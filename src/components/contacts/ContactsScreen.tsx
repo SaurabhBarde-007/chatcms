@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useFetch } from "@/hooks/useFetch";
 import { api } from "@/lib/api-client";
@@ -48,15 +48,17 @@ export function ContactsScreen() {
   const first = useFetch<ListResponse>(`/api/contacts?${key}`);
   const [more, setMore] = useState<{ key: string; pages: ListResponse[] }>({ key: "", pages: [] });
   const [edits, setEdits] = useState<Record<string, Partial<ContactRowDTO>>>({});
+  const [deleted, setDeleted] = useState<Set<string>>(() => new Set());
   const [moreError, setMoreError] = useState<string | null>(null);
 
   const pages = first.data ? [first.data, ...(more.key === key ? more.pages : [])] : [];
   const last = pages[pages.length - 1];
+  const shown = pages.flatMap((p) => p.contacts);
   const list: ListResponse | null = first.data
     ? {
-        total: first.data.total,
+        total: first.data.total - shown.filter((c) => deleted.has(c.id)).length,
         nextCursor: last.nextCursor,
-        contacts: pages.flatMap((p) => p.contacts).map((c) => ({ ...c, ...edits[c.id] })),
+        contacts: shown.filter((c) => !deleted.has(c.id)).map((c) => ({ ...c, ...edits[c.id] })),
       }
     : null;
   const error = first.error ?? moreError;
@@ -86,6 +88,7 @@ export function ContactsScreen() {
   function reloadAll() {
     setMore({ key: "", pages: [] });
     setEdits({});
+    setDeleted(new Set());
     first.reload();
     tags.reload();
   }
@@ -156,22 +159,34 @@ export function ContactsScreen() {
               <th className="px-3 py-2 font-medium">Marketing</th>
               <th className="px-3 py-2 font-medium">Last message</th>
               <th className="px-3 py-2 font-medium">Added</th>
+              <th className="px-3 py-2">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>
             {list?.contacts.map((c) => (
-              <ContactRow key={c.id} contact={c} onChanged={(change) => patchRow(c.id, change)} onTagsChanged={tags.reload} />
+              <ContactRow
+                key={c.id}
+                contact={c}
+                onChanged={(change) => patchRow(c.id, change)}
+                onTagsChanged={tags.reload}
+                onDeleted={() => {
+                  setDeleted((d) => new Set(d).add(c.id));
+                  tags.reload();
+                }}
+              />
             ))}
             {list && !list.contacts.length && (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
+                <td colSpan={7} className="px-3 py-8 text-center text-slate-400">
                   No contacts match. Add one, import a CSV, or wait for customers to message you on WhatsApp.
                 </td>
               </tr>
             )}
             {!list && !error && (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
+                <td colSpan={7} className="px-3 py-8 text-center text-slate-400">
                   Loading…
                 </td>
               </tr>
@@ -213,10 +228,12 @@ function ContactRow({
   contact: c,
   onChanged,
   onTagsChanged,
+  onDeleted,
 }: {
   contact: ContactRowDTO;
   onChanged: (change: Partial<ContactRowDTO>) => void;
   onTagsChanged: () => void;
+  onDeleted: () => void;
 }) {
   const [editingTags, setEditingTags] = useState(false);
   const [editingDetails, setEditingDetails] = useState(false);
@@ -239,6 +256,24 @@ function ContactRow({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save");
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    const who = c.name ?? c.phone ?? "this contact";
+    const warning =
+      c.optInStatus === "OPTED_OUT"
+        ? "\n\nThey opted out of your messages. Deleting forgets that too, so a later import could opt them in again. To stop messaging them, use Block instead."
+        : "";
+    if (!confirm(`Delete ${who}? Their chats and campaign history are deleted too. This can't be undone. If they message you again, they'll come back as a new contact.${warning}`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.request("DELETE", `/api/contacts/${c.id}`);
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete");
       setBusy(false);
     }
   }
@@ -330,6 +365,17 @@ function ContactRow({
       </td>
       <td className="px-3 py-2 text-xs text-slate-500">{c.lastActiveAt ? relativeTime(c.lastActiveAt) : "Never"}</td>
       <td className="px-3 py-2 text-xs text-slate-500">{relativeTime(c.createdAt)}</td>
+      <td className="px-3 py-2 text-right">
+        <button
+          className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+          disabled={busy}
+          onClick={remove}
+          aria-label={`Delete ${c.name ?? c.phone ?? "contact"}`}
+          title="Delete contact"
+        >
+          <Trash2 size={15} />
+        </button>
+      </td>
     </tr>
   );
 }
